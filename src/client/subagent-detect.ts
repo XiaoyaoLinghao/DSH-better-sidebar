@@ -4,8 +4,8 @@
  * effect and the Subagent page:
  *
  * - {@link directSubagentCount}: direct durable children of one session,
- * - {@link detectNewDirectSubagent}: the 0 → N transition that means "a new
- *   subagent just spawned under the current session" (the auto-open trigger),
+ * - {@link detectNewDirectSubagent}: exact direct child ids newly present in a
+ *   snapshot (the auto-open trigger),
  * - {@link countSubagentDescendants}: uninterrupted subagent-origin lineage
  *   totals (mirror of the official `indexSubagentDescendants` over the
  *   plugin's own summary rows).
@@ -76,18 +76,26 @@ export function collectBranchIds(
 }
 
 /**
- * Whether a new direct subagent appeared under `sessionId` between two
- * consecutive list snapshots (the count crossed 0 → >0). Switching to a
- * session that already has subagents yields `false` (its baseline starts at
- * the current count), so the auto-open never fights an existing layout.
+ * Return exact direct child ids newly present under `sessionId` between two
+ * consecutive list snapshots.  Callers can arbitrate each child identity
+ * independently; a later child is not hidden by an earlier 0 → N transition.
  */
 export function detectNewDirectSubagent(
   prev: SidebarSessionList,
   next: SidebarSessionList,
   sessionId: string,
-): boolean {
-  return directSubagentCount(prev.byId, sessionId) === 0
-    && directSubagentCount(next.byId, sessionId) > 0
+): string[] {
+  const previous = new Set<string>()
+  for (const summary of Object.values(prev.byId)) {
+    if (summary.origin === 'subagent' && summary.parentId === sessionId) previous.add(summary.id)
+  }
+  const added: string[] = []
+  for (const summary of Object.values(next.byId)) {
+    if (summary.origin === 'subagent' && summary.parentId === sessionId && !previous.has(summary.id)) {
+      added.push(summary.id)
+    }
+  }
+  return added
 }
 
 /** Descendant totals of one session through an uninterrupted subagent-origin chain. */

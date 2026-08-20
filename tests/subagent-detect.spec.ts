@@ -37,13 +37,13 @@ describe('subagent detection over the sessions list feed', () => {
     const empty = list('p1', [])
     const one = list('p1', ['c1'])
     const two = list('p1', ['c1', 'c2'])
-    expect(detectNewDirectSubagent(empty, empty, 'p1')).toBe(false)
-    expect(detectNewDirectSubagent(empty, one, 'p1')).toBe(true)
-    // Already-present children never re-trigger (session switch, reload).
-    expect(detectNewDirectSubagent(one, two, 'p1')).toBe(false)
-    expect(detectNewDirectSubagent(two, one, 'p1')).toBe(false)
+    expect(detectNewDirectSubagent(empty, empty, 'p1')).toEqual([])
+    expect(detectNewDirectSubagent(empty, one, 'p1')).toEqual(['c1'])
+    // Exact IDs allow a later child to trigger independently.
+    expect(detectNewDirectSubagent(one, two, 'p1')).toEqual(['c2'])
+    expect(detectNewDirectSubagent(two, one, 'p1')).toEqual([])
     // A child arriving under ANOTHER session does not trigger this one.
-    expect(detectNewDirectSubagent(empty, list('p2', ['x']), 'p1')).toBe(false)
+    expect(detectNewDirectSubagent(empty, list('p2', ['x']), 'p1')).toEqual([])
   })
 
   it('indexes descendants through uninterrupted subagent lineage', () => {

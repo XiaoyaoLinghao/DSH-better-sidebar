@@ -51,6 +51,7 @@ import { OrphanedTab } from './OrphanedTab.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { detectNewDirectSubagent } from './subagent-detect.ts'
 import { detectNewJob } from './subagent-jobs.ts'
+import type { SidechainController } from './sidechain/controller.ts'
 import { t } from './locales.ts'
 import { api, type SessionScope } from './api.ts'
 import css from './sidebar.module.css'
@@ -119,8 +120,8 @@ function buildNewTabOptions(state: SidebarState, ctx: Context, scope: SessionSco
     }))
 }
 
-export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
-  const { ctx, store } = props
+export function Sidebar(props: { ctx: Context; store: SidebarStore; controller?: SidechainController }) {
+  const { ctx, store, controller } = props
 
   // Copy freshness: re-render the whole tree when the DSH locale switches.
   // The module-level t() reads the active locale at call time, so a root
@@ -321,30 +322,37 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore }) {
   }, [sessionId, store])
 
   /**
-   * Subagent auto-activation: the moment the current conversation spawns its
-   * FIRST direct subagent (a 0 → N transition on the list feed), the "auto
-   * open" pref is on, and the Subagent tab type is enabled in settings,
+   * Subagent auto-activation: when the current conversation gains a direct
+   * child, the "auto open" pref is on, and the Subagent tab type is enabled,
    * open the panel (if collapsed) and focus the Subagent page
    * (single-instance: an existing tab is focused, never duplicated).
-   * Switching to a session that already has subagents never triggers — its
-   * baseline starts at the current count — so a deliberate layout is never
-   * fought.
+   * Sidechain's command observer claims its exact child id through the shared
+   * controller.  Deferring each generic candidate by one microtask makes the
+   * outcome independent of observer/effect arrival order.
    */
   const listBaselineRef = useRef<SidebarSessionList | undefined>(undefined)
   useEffect(() => {
     const prev = listBaselineRef.current
     listBaselineRef.current = sessionList
     if (sessionId === undefined || prev === undefined) return
-    if (!detectNewDirectSubagent(prev, sessionList, sessionId)) return
-    if (!store.getPrefs().autoOpenSubagent) return
-    if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
-    store.reduce(s => s.panelOpen ? s : togglePanel(s))
-    // Pin the landing to the right panel: the auto-opened Subagent page must
-    // appear where the panel just expanded, not in a bottom-panel pane the
-    // user last touched.
-    store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
-    ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
-  }, [sessionList, sessionId, store, ctx])
+    if (sessionList.current !== prev.current) {
+      if (sessionId !== undefined) controller?.resetSession(sessionId)
+      return
+    }
+    for (const childId of detectNewDirectSubagent(prev, sessionList, sessionId)) {
+      const openGeneric = (): void => {
+        if (!store.getPrefs().autoOpenSubagent) return
+        if (ctx.betterSidebar?.isTabEnabled('subagent') === false) return
+        store.reduce(s => s.panelOpen ? s : togglePanel(s))
+        // Pin the landing to the right panel: the auto-opened Subagent page
+        // must appear where the panel just expanded.
+        store.reduce(s => ({ ...s, activePane: firstLeaf(s.splits).id }))
+        ctx.betterSidebar?.openTab({ type: 'subagent', title: t('subagent') })
+      }
+      if (controller !== undefined) controller.deferGenericCandidate(sessionId, childId, openGeneric)
+      else openGeneric()
+    }
+  }, [sessionList, sessionId, store, ctx, controller])
 
   /**
    * Job auto-activation: the moment a NEW background job appears for the

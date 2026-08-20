@@ -4,6 +4,7 @@ import type { BetterSidebarService } from '../service.ts'
 import { createSidechainCommandCards } from './SideCommandCard.tsx'
 import { createSidechainController, type SidechainController } from './controller.ts'
 import { createSidechainHistory, type SidechainHistory } from './history.ts'
+import { SidechainCommandObserver, type SidechainCommandObserverProps } from './observer.tsx'
 import type { SidechainTabOptions } from './register.tsx'
 
 /** The activation-scoped resources shared by the Sidechain tab and cards. */
@@ -33,6 +34,19 @@ export function createSidechainClientRuntime(
   let disposed = false
 
   try {
+    // The observer is deliberately a null-rendering input-dock contribution:
+    // this keeps command discovery alive for blank/fast sessions without
+    // creating a second panel or layout owner.
+    slotDisposers.push(ctx.slots.inject(
+      'conversation.input.dock',
+      () => ctx.slots.register({
+        name: 'conversation.input.dock',
+        id: 'sidechain-command-observer',
+        registrant: 'dsh-better-sidebar',
+      }, (props: SidechainCommandObserverProps) => (
+        <SidechainCommandObserver {...props} controller={controller} />
+      )),
+    ))
     for (const card of createSidechainCommandCards()) {
       slotDisposers.push(ctx.slots.inject(
         'conversation.chat.commandview',

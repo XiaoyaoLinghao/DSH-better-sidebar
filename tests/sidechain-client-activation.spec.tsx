@@ -25,7 +25,7 @@ function fakeContext(declared = true): {
   let declaredState = declared
   const register = vi.fn((options: Record<string, unknown>, component: unknown) => {
       const dispose = vi.fn()
-      const key = String(options.key)
+      const key = String(options.key ?? options.id)
       const entry = { options, component, dispose }
       if (live.has(key)) throw new Error(`duplicate live card ${key}`)
       live.set(key, entry)
@@ -79,7 +79,7 @@ function fakeContext(declared = true): {
 }
 
 describe('sidechain client activation', () => {
-  it('registers exactly two keyed cards and supports a late slot declaration', () => {
+  it('registers two cards plus a nonvisual observer and supports a late slot declaration', () => {
     const { ctx, register, liveCards, declare, collapse } = fakeContext(false)
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
@@ -87,19 +87,22 @@ describe('sidechain client activation', () => {
 
     expect(liveCards()).toHaveLength(0)
     declare()
-    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
-    expect(liveCards().every(entry => entry.options.name === 'conversation.chat.commandview')).toBe(true)
+    expect(liveCards().map(entry => entry.options.key ?? entry.options.id).sort()).toEqual(['btw', 'side', 'sidechain-command-observer'])
+    expect(liveCards().filter(entry => entry.options.name === 'conversation.chat.commandview')).toHaveLength(2)
+    expect(liveCards().filter(entry => entry.options.name === 'conversation.input.dock')).toHaveLength(1)
 
     collapse()
     expect(liveCards()).toHaveLength(0)
     declare()
-    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
+    expect(liveCards().map(entry => entry.options.key ?? entry.options.id).sort()).toEqual(['btw', 'side', 'sidechain-command-observer'])
 
     runtime.dispose()
     runtime.dispose()
     expect(liveCards()).toHaveLength(0)
-    expect(register).toHaveBeenCalledTimes(4)
-    expect(register.mock.calls.map(call => call[0].key).sort()).toEqual(['btw', 'btw', 'side', 'side'])
+    expect(register).toHaveBeenCalledTimes(6)
+    expect(register.mock.calls.map(call => call[0].key ?? call[0].id).sort()).toEqual([
+      'btw', 'btw', 'side', 'side', 'sidechain-command-observer', 'sidechain-command-observer',
+    ])
     expect(liveCards()).toHaveLength(0)
     declare()
     expect(liveCards()).toHaveLength(0)
@@ -140,7 +143,7 @@ describe('sidechain client activation', () => {
     const service = createBetterSidebarService(store)
     const first = createSidechainClientRuntime(ctx, service, store)
     const disposeFirst = registerBuiltins(ctx, service, { sidechain: first.tab })
-    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
+    expect(liveCards().map(entry => entry.options.key ?? entry.options.id).sort()).toEqual(['btw', 'side', 'sidechain-command-observer'])
     disposeFirst()
     first.dispose()
     expect(liveCards()).toHaveLength(0)
@@ -148,7 +151,7 @@ describe('sidechain client activation', () => {
     const second = createSidechainClientRuntime(ctx, service, store)
     const disposeSecond = registerBuiltins(ctx, service, { sidechain: second.tab })
     expect(service.getTabs().filter(tab => tab.id === 'sidechain')).toHaveLength(1)
-    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
+    expect(liveCards().map(entry => entry.options.key ?? entry.options.id).sort()).toEqual(['btw', 'side', 'sidechain-command-observer'])
     disposeSecond()
     second.dispose()
     expect(liveCards()).toHaveLength(0)
