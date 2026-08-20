@@ -171,14 +171,16 @@ export interface SidebarSubagentCatalog {
 }
 
 /** Durable parent/child address that selects subagent transport in the client. */
-export type SidebarSubagentAddress = {
+export interface SidebarSubagentAddress {
   parentSessionId: string
   childSessionId: string
-} & ({
-  mode: 'one-shot'
-} | {
+  mode: 'one-shot' | 'continuable'
+}
+
+/** Address accepted by the continuable follow-up prompt RPC. */
+export interface SidebarContinuableSubagentAddress extends SidebarSubagentAddress {
   mode: 'continuable'
-})
+}
 
 /** Minimal structural mirror of one session event (the subagent history tail). */
 export interface SidebarSessionEvent {
@@ -234,21 +236,67 @@ export interface SidebarAgentsService {
   get(id: string): SidebarAgent | undefined
 }
 
-/** Browser-safe image block admitted to a command invocation. The host-owned
- * attachment store has already made these blocks durable by this boundary. */
-export interface SidebarCommandImageBlock {
-  readonly type: 'image'
-  readonly mediaType: string
-  readonly data: string
-  readonly name?: string
+/** Durable image metadata exposed by rc.8 after upload admission. */
+export interface SidebarImageAttachmentRef {
+  attachmentId: string
+  mediaType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+  bytes: number
+  width: number
+  height: number
+  name?: string
 }
+
+/** Browser-safe image block admitted to a command invocation or prompt. */
+export interface SidebarImageBlock {
+  type: 'image'
+  attachment: SidebarImageAttachmentRef
+}
+
+/** Text content accepted by the rc.8 prompt RPC. */
+export interface SidebarPromptTextBlock {
+  type: 'text'
+  text: string
+}
+
+/** Reasoning content accepted by the rc.8 prompt RPC. */
+export interface SidebarPromptReasoningBlock {
+  type: 'reasoning'
+  text: string
+}
+
+/** Tool-call content accepted by the rc.8 prompt RPC. */
+export interface SidebarPromptToolCallBlock {
+  type: 'tool-call'
+  id: string
+  name: string
+  arguments: string
+}
+
+/** Tool-result content accepted by the rc.8 prompt RPC. */
+export interface SidebarPromptToolResultBlock {
+  type: 'tool-result'
+  toolCallId: string
+  content: SidebarPromptContentBlock[]
+  isError?: boolean
+}
+
+/** Browser-safe structural mirror of dsh-llm's ContentBlock union. */
+export type SidebarPromptContentBlock =
+  | SidebarPromptTextBlock
+  | SidebarPromptReasoningBlock
+  | SidebarImageBlock
+  | SidebarPromptToolCallBlock
+  | SidebarPromptToolResultBlock
+
+/** @deprecated Use SidebarImageBlock; retained as a source-compatible alias. */
+export type SidebarCommandImageBlock = SidebarImageBlock
 
 /** The narrow command invocation face a command handler consumes. */
 export interface SidebarCommandInvocation {
   readonly commandId: string
   readonly agent: SidebarAgent
   readonly rawInput: string
-  readonly attachments: readonly SidebarCommandImageBlock[]
+  readonly attachments: readonly SidebarImageBlock[]
   readonly signal: AbortSignal
 }
 
@@ -294,8 +342,8 @@ export interface SidebarConnectionHandle {
         projections?: { asOfSeq: number; values: Record<string, unknown> }
       }>>
       prompt(
-        payload: Extract<SidebarSubagentAddress, { mode: 'continuable' }> & {
-          content: SidebarPromptContentPart[]
+        payload: SidebarContinuableSubagentAddress & {
+          content: SidebarPromptContentBlock[]
           clientTimeZone?: string
         },
         signal: AbortSignal,
@@ -304,10 +352,8 @@ export interface SidebarConnectionHandle {
   }
 }
 
-/** Browser-submitted prompt content accepted by the rc.8 subagent RPC. */
-export type SidebarPromptContentPart =
-  | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'image'; readonly mediaType: string; readonly data: string; readonly name?: string }
+/** @deprecated Use SidebarPromptContentBlock; retained for source compatibility. */
+export type SidebarPromptContentPart = SidebarPromptContentBlock
 
 /** The client session list snapshot the sidebar subscribes to. */
 export interface SidebarSessionList {

@@ -43,7 +43,11 @@ import type {
   SidebarCommandDefinition,
   SidebarConnectionHandle,
   SidebarHistoryEntry,
+  SidebarImageAttachmentRef,
+  SidebarImageBlock,
+  SidebarPromptContentBlock,
   SidebarSubagentAddress,
+  SidebarContinuableSubagentAddress,
 } from '../src/context-types.ts'
 
 /** A full-featured external tab descriptor using every v0.12.0 field. */
@@ -152,6 +156,12 @@ declare const browserCtx: Context
 const sideAddress: SidebarSubagentAddress = {
   parentSessionId: 'parent', childSessionId: 'child', mode: 'continuable',
 }
+interface AddressExtension extends SidebarSubagentAddress {
+  traceId?: string
+}
+const extendedAddress: AddressExtension = { ...sideAddress, traceId: 'trace' }
+void extendedAddress
+const continuableAddress: SidebarContinuableSubagentAddress = { ...sideAddress, mode: 'continuable' }
 const historyResponse = browserCtx.connection.api.subagents.history(sideAddress)
 historyResponse.then(response => {
   if (!response.result.ok) return
@@ -165,10 +175,24 @@ historyResponse.then(response => {
 
 /** rc.8 requires a local cancellation signal for continuable prompts. */
 const promptResponse = browserCtx.connection.api.subagents.prompt({
-  ...sideAddress,
-  content: [{ type: 'text', text: 'Follow up' }],
+  ...continuableAddress,
+  content: [
+    { type: 'text', text: 'Follow up' },
+    {
+      type: 'image',
+      attachment: {
+        attachmentId: 'img-1', mediaType: 'image/png', bytes: 4,
+        width: 2, height: 2, name: 'diagram.png',
+      },
+    },
+  ],
 }, new AbortController().signal)
 void promptResponse
+const promptContent: SidebarPromptContentBlock[] = [
+  { type: 'text', text: 'Follow up' },
+  { type: 'image', attachment: {} as SidebarImageAttachmentRef },
+]
+void promptContent
 
 /** Command handlers receive admitted image attachments in submission order. */
 const sideCommand: SidebarCommandDefinition = {
@@ -176,8 +200,12 @@ const sideCommand: SidebarCommandDefinition = {
   description: 'Side conversation',
   input: { hint: '<question>', images: true },
   handler: ({ attachments, signal }) => {
-    const first = attachments[0]
-    if (first !== undefined) void first.data
+    const first: SidebarImageBlock | undefined = attachments[0]
+    if (first !== undefined) {
+      void first.attachment.attachmentId
+      // @ts-expect-error rc.8 command attachments are durable refs, not base64 uploads.
+      void first.data
+    }
     void signal
     return { kind: 'success', text: 'ok' }
   },

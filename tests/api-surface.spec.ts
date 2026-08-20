@@ -65,7 +65,9 @@ describe('public API surface (v0.12.0)', () => {
     expect(contextSource).not.toMatch(/@deepseek-ai\/agent-harness/)
     expect(contextSource).not.toMatch(/from\s+['"]node:/)
     expect(contextSource).toMatch(/prompt\([\s\S]*signal:\s*AbortSignal/)
-    expect(contextSource).toMatch(/attachments:\s*readonly\s+SidebarCommandImageBlock\[\]/)
+    expect(contextSource).toMatch(/attachments:\s*readonly\s+SidebarImageBlock\[\]/)
+    expect(contextSource).toMatch(/content:\s*SidebarPromptContentBlock\[\]/)
+    expect(contextSource).toMatch(/type:\s*'image'[\s\S]*attachment:\s*SidebarImageAttachmentRef/)
   })
 
   it('advertises the capability list and version (values come from service.ts)', () => {
