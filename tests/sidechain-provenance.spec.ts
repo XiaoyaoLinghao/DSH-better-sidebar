@@ -11,14 +11,56 @@ const adaptedSources = [
   'src/client/sidechain/activity.ts',
   'src/client/sidechain/file-mentions.ts',
   'src/client/sidechain/history.ts',
+  'src/client/sidechain/observer.tsx',
   'src/client/sidechain/TranscriptRows.tsx',
+  'src/client/sidechain/transcript.ts',
   'src/sidechain-host/commands.ts',
   'src/sidechain-host/prompts.ts',
   'src/sidechain-host/settlement-silence.ts',
   'src/sidechain-host/side.ts',
 ] as const
 
-const provenance = /adapted from @dsh-external\/dsh-sidechain[\s\S]*BSD-3-Clause/
+const provenance = /adapted from @dsh-external\/dsh-sidechain[\s\S]*?Copyright \(c\) 2026, dsh-external contributors, under the BSD-3-Clause[\s\S]*?License\. See THIRD_PARTY_NOTICES for the complete notice\./
+
+const completeBsdNotice = `## dsh-sidechain
+
+BSD 3-Clause License
+
+Copyright (c) 2026, dsh-external contributors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.`
+
+function normalizeNotice(notice: string): string {
+  return notice
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.trimEnd())
+    .join('\n')
+    .trim()
+}
 
 function read(relativePath: string): string {
   return readFileSync(resolve(root, relativePath), 'utf8')
@@ -52,13 +94,7 @@ describe('sidechain package provenance', () => {
 
   it('ships the complete BSD-3-Clause notice and packs it', () => {
     const notice = read('THIRD_PARTY_NOTICES')
-    expect(notice).toContain('BSD 3-Clause License')
-    expect(notice).toContain('Copyright (c) 2026, dsh-external contributors')
-    expect(notice).toContain('1. Redistributions of source code must retain')
-    expect(notice).toContain('2. Redistributions in binary form must reproduce')
-    expect(notice).toContain('3. Neither the name of the copyright holder')
-    expect(notice).toContain('THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"')
-    expect(notice).toContain('IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE')
+    expect(normalizeNotice(notice)).toBe(normalizeNotice(completeBsdNotice))
 
     expect(packInventory()).toContain('THIRD_PARTY_NOTICES')
   }, 120_000)

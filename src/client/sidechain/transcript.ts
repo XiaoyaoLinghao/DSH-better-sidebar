@@ -1,4 +1,10 @@
-/** Pure folding of sidechain session events into display rows. */
+/**
+ * Portions of this file are adapted from @dsh-external/dsh-sidechain,
+ * Copyright (c) 2026, dsh-external contributors, under the BSD-3-Clause
+ * License. See THIRD_PARTY_NOTICES for the complete notice.
+ *
+ * Pure folding of sidechain session events into display rows.
+ */
 
 import type { ToolCallView, ToolEventView, ToolResultView } from '@deepseek-ai/dsh-host-apiproxy/api'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm/types'

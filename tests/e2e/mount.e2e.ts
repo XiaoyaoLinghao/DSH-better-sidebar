@@ -29,7 +29,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext } from '@playwright/test'
+import { test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
 
 const BASE_URL = process.env.DSH_E2E_URL
 if (!BASE_URL) {
@@ -101,28 +101,26 @@ async function seedSession(): Promise<void> {
   expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
 }
 
-/** Toggle the native Sidechain descriptor through the same settings route
- * used by the Side card. The real mount lane has no model key, so availability
- * is verified through the deterministic + menu inventory instead. */
-async function setSidechainEnabled(enabled: boolean): Promise<void> {
-  const read = await api.post(`${BASE_URL}/sidebar/api/settings.get`, { data: {} })
-  expect(read.ok(), `settings.get: ${read.status()} ${await read.text()}`).toBe(true)
-  const view = (await read.json()) as {
-    ok: true
-    value: { value?: Record<string, unknown>; revision?: number }
-  }
-  expect(view.ok).toBe(true)
-  const current = view.value.value ?? {}
-  const tabsEnabled = current.tabsEnabled !== null && typeof current.tabsEnabled === 'object'
-    ? current.tabsEnabled as Record<string, unknown>
-    : {}
-  const write = await api.post(`${BASE_URL}/sidebar/api/settings.update`, {
-    data: {
-      patch: { tabsEnabled: { ...tabsEnabled, sidechain: enabled } },
-      ...(typeof view.value.revision === 'number' ? { expectedRevision: view.value.revision } : {}),
-    },
-  })
-  expect(write.ok(), `settings.update: ${write.status()} ${await write.text()}`).toBe(true)
+/** Open the real DSH Settings dialog and select this plugin's Side card. */
+async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
+  const settingsButton = page.locator(
+    '[aria-label="Settings"], [title="Settings"], button:has-text("Settings"), a:has-text("Settings")',
+  ).first()
+  await expect(settingsButton, 'the DSH shell must expose its Settings entry').toHaveCount(1, { timeout: 30_000 })
+  await settingsButton.click()
+  const dialog = page.getByRole('dialog').last()
+  const sideCard = dialog.getByRole('button', { name: 'Side card', exact: true })
+  await expect(sideCard, 'the plugin must register a Side card settings section').toHaveCount(1, { timeout: 30_000 })
+  await sideCard.click()
+  const sidechainCard = dialog.locator('button[aria-pressed][title="sidechain"]')
+  await expect(sidechainCard, 'the Side card must render the Sidechain enable card').toHaveCount(1, { timeout: 30_000 })
+  return sidechainCard
+}
+
+/** Close the native Settings dialog after exercising its real controls. */
+async function closeSettings(page: Page): Promise<void> {
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0, { timeout: 10_000 })
 }
 
 test.beforeAll(async () => {
@@ -220,6 +218,11 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(sidebar).toHaveCount(1)
   await expect(sidebar.locator('[data-sidechain-session-header-toggle]')).toHaveCount(0)
   await expect(sidebar.locator('aside')).toHaveCount(0)
+  // Legacy sidechain owned a separately labelled header and complementary
+  // panel. Assert those real page-level accessibility seams are absent too;
+  // data markers alone could disappear without the old UI actually leaving.
+  await expect(page.locator('[aria-label="Sidechain: /side & /btw subagents"]')).toHaveCount(0)
+  await expect(page.locator('[role="complementary"][aria-label="Sidechain"]')).toHaveCount(0)
 
   // Crash-marker assertions shared by every step.
   const assertNoCrash = async (): Promise<void> => {
@@ -256,12 +259,23 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     // crash assertions run.
     await page.waitForTimeout(1_500)
     await assertNoCrash()
+    if (title === 'Sidechain') {
+      await expect(sidebar.locator('[data-sidechain-view]'), 'selecting Sidechain from + must mount its real view').toBeVisible()
+    }
   }
 
-  // The Side card's enable switch gates the + inventory but does not remove an
-  // already-open tab. Toggle it off through the persisted settings seam, then
-  // reload and prove the add action disappears; restore it and prove it returns.
-  await setSidechainEnabled(false)
+  // The Side card's real enable switch gates the + inventory but does not
+  // remove an already-open tab. Toggle it off in the native Settings UI and
+  // verify the menu follows live, then reload to prove the setting persisted.
+  const disabledSidechainCard = await openSideCard(page)
+  await disabledSidechainCard.click()
+  await expect(disabledSidechainCard).toHaveAttribute('aria-pressed', 'false')
+  await closeSettings(page)
+  const liveDisabledNewTab = sidebar.getByRole('button', { name: 'New tab' }).first()
+  await liveDisabledNewTab.click()
+  await expect(page.getByRole('menuitem', { name: 'Sidechain' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })
   const disabledNewTab = page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'New tab' }).first()
@@ -269,7 +283,17 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await expect(page.getByRole('menuitem', { name: 'Sidechain' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  await setSidechainEnabled(true)
+  // Re-enable through the same real card, then verify both live and persisted
+  // availability in the add-tab menu.
+  const restoredSidechainCard = await openSideCard(page)
+  await restoredSidechainCard.click()
+  await expect(restoredSidechainCard).toHaveAttribute('aria-pressed', 'true')
+  await closeSettings(page)
+  const liveRestoredNewTab = page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'New tab' }).first()
+  await liveRestoredNewTab.click()
+  await expect(page.getByRole('menuitem', { name: 'Sidechain' })).toHaveCount(1)
+  await page.keyboard.press('Escape')
+
   await page.reload({ waitUntil: 'domcontentloaded' })
   const restoredSidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(restoredSidebar).toHaveCount(1, { timeout: 90_000 })
@@ -281,26 +305,45 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // Exercise the persisted tab-meta contract without needing a model-backed
   // child: inject the canonical v1 metadata into the real session state,
   // reload, and require hydration to recover safely to the list view.
-  await page.evaluate(() => {
+  const persisted = await page.evaluate(() => {
     const key = Object.keys(localStorage).find(item => item.startsWith('dsh-sidebar:v1:'))
     if (key === undefined) throw new Error('mount lane could not find the session sidebar state')
     const state = JSON.parse(localStorage.getItem(key) ?? 'null') as { splits?: unknown; bottomSplits?: unknown }
+    const sidechainTabs: Array<Record<string, unknown>> = []
     const visit = (node: unknown): void => {
       if (node === null || typeof node !== 'object') return
       const record = node as { kind?: unknown; tabs?: unknown; children?: unknown }
       if (record.kind === 'leaf' && Array.isArray(record.tabs)) {
         const tabs = record.tabs as Array<Record<string, unknown>>
-        const sidechain = tabs.find(tab => tab.type === 'sidechain')
-        if (sidechain !== undefined) sidechain.meta = { version: 1, selectedChildId: 'mount-missing-child' }
-        for (const tab of tabs) {
-          if (tab.type === 'sidechain') tab.meta = { version: 1, selectedChildId: 'mount-missing-child' }
-        }
+        for (const tab of tabs) if (tab.type === 'sidechain') sidechainTabs.push(tab)
       }
       if (Array.isArray(record.children)) for (const child of record.children) visit(child)
     }
     visit(state.splits)
     visit(state.bottomSplits)
+    if (sidechainTabs.length !== 1) throw new Error(`expected exactly one Sidechain tab, found ${sidechainTabs.length}`)
+    sidechainTabs[0]!.meta = { version: 1, selectedChildId: 'mount-missing-child' }
     localStorage.setItem(key, JSON.stringify(state))
+    const stored = JSON.parse(localStorage.getItem(key) ?? 'null') as typeof state
+    const storedSidechainTabs: Array<Record<string, unknown>> = []
+    const collect = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return
+      const record = node as { kind?: unknown; tabs?: unknown; children?: unknown }
+      if (record.kind === 'leaf' && Array.isArray(record.tabs)) {
+        for (const tab of record.tabs as Array<Record<string, unknown>>) {
+          if (tab.type === 'sidechain') storedSidechainTabs.push(tab)
+        }
+      }
+      if (Array.isArray(record.children)) for (const child of record.children) collect(child)
+    }
+    collect(stored.splits)
+    collect(stored.bottomSplits)
+    return { count: storedSidechainTabs.length, meta: storedSidechainTabs[0]?.meta }
+  })
+  expect(persisted.count, 'session persistence must contain exactly one Sidechain tab').toBe(1)
+  expect(persisted.meta, 'Sidechain persistence must contain only the canonical v1 metadata').toEqual({
+    version: 1,
+    selectedChildId: 'mount-missing-child',
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
   await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })

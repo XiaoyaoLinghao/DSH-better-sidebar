@@ -81,7 +81,7 @@ Sidechain shows direct children of the current parent and owns inline `/side` co
 
 The compatibility baseline is DSH `0.1.0-rc.8` (rc.7 and earlier are unsupported). Code adapted from the `dsh-sidechain` reference is shipped with its BSD-3-Clause copyright, conditions, and disclaimer in [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES).
 
-### v0.13.1### v0.13.1
+### v0.13.1
 
 **✨ New features**
 

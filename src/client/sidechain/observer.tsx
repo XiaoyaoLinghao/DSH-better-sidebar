@@ -1,4 +1,8 @@
 /**
+ * Portions of this file are adapted from @dsh-external/dsh-sidechain,
+ * Copyright (c) 2026, dsh-external contributors, under the BSD-3-Clause
+ * License. See THIRD_PARTY_NOTICES for the complete notice.
+ *
  * Non-visual observer for native `/side` and `/btw` command lifecycles.
  *
  * Command rows are not a reliable lifecycle surface: blank sessions may not

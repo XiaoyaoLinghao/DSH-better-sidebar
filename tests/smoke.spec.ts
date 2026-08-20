@@ -599,6 +599,7 @@ describe('side card settings routes', () => {
         defaultWidthPercent: 35,
         autoOpenSubagent: true,
         autoOpenJobs: true,
+        autoOpenSidechain: true,
         agentTerminalTools: false,
         bottomPanelAutoTerminal: true,
         terminalFontFamily: '',
