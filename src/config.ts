@@ -20,6 +20,7 @@ import {
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
+import { SIDE_PERSONA } from './sidechain-host/prompts.ts'
 
 export {
   SIDEBAR_PREFS_DEFAULTS,
@@ -35,6 +36,16 @@ export {
   WIDTH_PERCENT_MIN,
   type SidebarPrefs,
 } from './prefs-shared.ts'
+
+/** Native /side and /btw host configuration (every field optional; defaults fill in). */
+export interface SidechainConfig {
+  /** Provider name registered on the subagent service. */
+  providerName?: string
+  /** Persona shadowing the deployment persona in a side-conversation child. */
+  persona?: string
+  /** Optional allow-list of read-only tools available to side-conversation children. */
+  readOnlyTools?: string[]
+}
 
 /** Tunable sidebar host limits (every field optional; defaults fill in). */
 export interface SidebarConfig {
@@ -64,6 +75,8 @@ export interface SidebarConfig {
    * the existing default behavior is kept.
    */
   shellArgs?: string[]
+  /** Native /side and /btw host configuration. */
+  sidechain?: SidechainConfig
 }
 
 /** Schemastery schema for the plugin configuration. */
@@ -75,6 +88,16 @@ export const Config: z<SidebarConfig> = z.object({
   reconnectGraceMs: z.number().step(1).min(0).default(30_000),
   shell: z.string().default(''),
   shellArgs: z.array(z.string()).default([]),
+  sidechain: z.object({
+    providerName: z.string().default('fork'),
+    persona: z.string().default(SIDE_PERSONA),
+    // Schemastery's array schema otherwise defaults an omitted value to [],
+    // while an absent allow-list must remain unset for the host resolver.
+    readOnlyTools: z.union([z.array(z.string()), z.const(undefined)]),
+    // Keep this new section absent in legacy Loader output; the direct-call
+    // resolver below supplies its effective defaults without reshaping old
+    // configuration documents.
+  }).default(undefined as never),
 })
 
 /** Fully defaulted sidebar host settings. */
@@ -88,6 +111,12 @@ export interface ResolvedSidebarConfig {
   shell: string
   /** Explicit shell arguments; empty means use the platform defaults. */
   shellArgs: string[]
+  /** Resolved native /side and /btw host configuration. */
+  sidechain: {
+    providerName: string
+    persona: string
+    readOnlyTools?: string[]
+  }
 }
 
 /**
@@ -105,6 +134,13 @@ export function resolveSidebarConfig(config: SidebarConfig | undefined): Resolve
     reconnectGraceMs: config?.reconnectGraceMs ?? 30_000,
     shell: config?.shell?.trim() ?? '',
     shellArgs: config?.shellArgs ?? [],
+    sidechain: {
+      providerName: config?.sidechain?.providerName ?? 'fork',
+      persona: config?.sidechain?.persona ?? SIDE_PERSONA,
+      ...(config?.sidechain?.readOnlyTools === undefined
+        ? {}
+        : { readOnlyTools: config.sidechain.readOnlyTools }),
+    },
   }
 }
 
