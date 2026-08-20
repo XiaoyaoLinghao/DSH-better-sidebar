@@ -47,7 +47,7 @@ interface ActivityState {
   lines: Record<string, string>
 }
 
-export function selectActivityLine(
+function selectActivityLine(
   activity: { readonly ownerParentSessionId: string | undefined; readonly lines: Readonly<Record<string, string>> },
   parentSessionId: string,
   childId: string,

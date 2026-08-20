@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, type ReactNode } from 'react'
+import { createElement, Profiler, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { createRoot, type Root } from 'react-dom/client'
 import type {
@@ -11,7 +11,7 @@ import type {
 import type { BetterSidebarService, SessionScope, SidebarTab } from '../src/client/service.ts'
 import type { SidechainController } from '../src/client/sidechain/controller.ts'
 import type { SidechainHistory } from '../src/client/sidechain/history.ts'
-import { selectActivityLine, SidechainView } from '../src/client/sidechain/SidechainView.tsx'
+import { SidechainView } from '../src/client/sidechain/SidechainView.tsx'
 import { getSidechainLabels } from '../src/client/locales.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -73,17 +73,40 @@ describe('SidechainView list shell', () => {
   beforeEach(() => { document.body.innerHTML = '' })
   afterEach(() => { vi.useRealTimers() })
 
-  it('does not select an old parent activity line during the render transition', () => {
-    expect(selectActivityLine(
-      { ownerParentSessionId: 'parent-a', lines: { same: 'old parent line' } },
-      'parent-b',
-      'same',
-    )).toBeUndefined()
-    expect(selectActivityLine(
-      { ownerParentSessionId: 'parent-a', lines: { same: 'old parent line' } },
-      'parent-a',
-      'same',
-    )).toBe('old parent line')
+  it('does not flash old activity in the parent-switch commit before passive effects', async () => {
+    vi.useFakeTimers()
+    const sessionFeed = feed({
+      current: 'parent', byId: {},
+      subagentsByParent: {
+        parent: catalog({ entries: [child('same', 'continuable', 'running')] }),
+        other: catalog({ entries: [child('same', 'continuable', 'running')] }),
+      },
+    })
+    const fetchActivity = vi.fn(async (address: SidebarSubagentAddress) =>
+      address.parentSessionId === 'parent' ? 'old parent line' : null,
+    )
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    const commits: string[] = []
+    const onRender = vi.fn(() => { commits.push(container.textContent ?? '') })
+    const renderView = (viewProps: ReturnType<typeof props>) => createElement(
+      Profiler,
+      { id: 'sidechain', onRender },
+      createElement(SidechainView, viewProps),
+    )
+    const initial = props(sessionFeed, { history: { fetchActivity } })
+    act(() => { root.render(renderView(initial)) })
+    await act(async () => { await Promise.resolve() })
+    expect(container.textContent).toContain('old parent line')
+    const commitsBeforeSwitch = commits.length
+
+    const next = props(sessionFeed, { parentSessionId: 'other', history: { fetchActivity } })
+    act(() => { root.render(renderView(next)) })
+    const switchCommits = commits.slice(commitsBeforeSwitch)
+    expect(switchCommits.length).toBeGreaterThan(0)
+    expect(switchCommits.some(text => !text.includes('old parent line'))).toBe(true)
+    unmount(root, container)
   })
 
   it('renders loading, empty, error, and direct children from the current parent catalog', () => {
