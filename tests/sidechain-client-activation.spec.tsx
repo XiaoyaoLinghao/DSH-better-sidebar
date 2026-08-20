@@ -15,17 +15,27 @@ interface RegisteredSlot {
 
 function fakeContext(declared = true): {
   ctx: Context
-  registered: RegisteredSlot[]
+  register: ReturnType<typeof vi.fn>
+  liveCards: () => RegisteredSlot[]
   declare: () => void
+  collapse: () => void
 } {
-  const registered: RegisteredSlot[] = []
-  const pendings: Array<() => void> = []
-  const slots = {
-    register: vi.fn((options: Record<string, unknown>, component: unknown) => {
+  const live = new Map<string, RegisteredSlot>()
+  const subscriptions = new Set<{ run: () => void; stop: () => void }>()
+  let declaredState = declared
+  const register = vi.fn((options: Record<string, unknown>, component: unknown) => {
       const dispose = vi.fn()
-      registered.push({ options, component, dispose })
+      const key = String(options.key)
+      const entry = { options, component, dispose }
+      if (live.has(key)) throw new Error(`duplicate live card ${key}`)
+      live.set(key, entry)
+      dispose.mockImplementation(() => {
+        if (live.get(key) === entry) live.delete(key)
+      })
       return dispose
-    }),
+  })
+  const slots = {
+    register,
     inject: vi.fn((_key: string, callback: () => () => void) => {
       let active: (() => void) | undefined
       let stopped = false
@@ -33,11 +43,19 @@ function fakeContext(declared = true): {
         if (stopped || active !== undefined) return
         active = callback()
       }
-      if (declared) run()
-      else pendings.push(run)
+      const subscription = {
+        run,
+        stop: () => {
+          active?.()
+          active = undefined
+        },
+      }
+      subscriptions.add(subscription)
+      if (declaredState) run()
       return () => {
         stopped = true
-        active?.()
+        subscription.stop()
+        subscriptions.delete(subscription)
       }
     }),
   }
@@ -45,24 +63,46 @@ function fakeContext(declared = true): {
     slots,
     connection: { api: { subagents: { history: vi.fn(), prompt: vi.fn() } } },
   } as unknown as Context
-  return { ctx, registered, declare: () => { for (const run of pendings) run() } }
+  return {
+    ctx,
+    register,
+    liveCards: () => [...live.values()],
+    declare: () => {
+      declaredState = true
+      for (const subscription of subscriptions) subscription.run()
+    },
+    collapse: () => {
+      declaredState = false
+      for (const subscription of subscriptions) subscription.stop()
+    },
+  }
 }
 
 describe('sidechain client activation', () => {
   it('registers exactly two keyed cards and supports a late slot declaration', () => {
-    const { ctx, registered, declare } = fakeContext(false)
+    const { ctx, register, liveCards, declare, collapse } = fakeContext(false)
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
     const runtime = createSidechainClientRuntime(ctx, service, store)
 
-    expect(registered).toHaveLength(0)
+    expect(liveCards()).toHaveLength(0)
     declare()
-    expect(registered.map(entry => entry.options.key)).toEqual(['side', 'btw'])
-    expect(registered.every(entry => entry.options.name === 'conversation.chat.commandview')).toBe(true)
+    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
+    expect(liveCards().every(entry => entry.options.name === 'conversation.chat.commandview')).toBe(true)
+
+    collapse()
+    expect(liveCards()).toHaveLength(0)
+    declare()
+    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
 
     runtime.dispose()
     runtime.dispose()
-    expect(registered.every(entry => entry.dispose.mock.calls.length === 1)).toBe(true)
+    expect(liveCards()).toHaveLength(0)
+    expect(register).toHaveBeenCalledTimes(4)
+    expect(register.mock.calls.map(call => call[0].key).sort()).toEqual(['btw', 'btw', 'side', 'side'])
+    expect(liveCards()).toHaveLength(0)
+    declare()
+    expect(liveCards()).toHaveLength(0)
   })
 
   it('shares one controller/history pair with the sole sidechain descriptor', () => {
@@ -70,6 +110,8 @@ describe('sidechain client activation', () => {
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
     const runtime = createSidechainClientRuntime(ctx, service, store)
+    const historyDispose = vi.spyOn(runtime.history, 'dispose')
+    const controllerDispose = vi.spyOn(runtime.controller, 'dispose')
     const disposeBuiltins = registerBuiltins(ctx, service, { sidechain: runtime.tab })
 
     expect(service.getTabs().filter(tab => tab.id === 'sidechain')).toHaveLength(1)
@@ -87,21 +129,28 @@ describe('sidechain client activation', () => {
     disposeBuiltins()
     expect(service.getTab('sidechain')).toBeUndefined()
     runtime.dispose()
+    runtime.dispose()
+    expect(historyDispose).toHaveBeenCalledTimes(1)
+    expect(controllerDispose).toHaveBeenCalledTimes(1)
   })
 
   it('can reactivate after both builtins and runtime are disposed without duplicates', () => {
-    const { ctx } = fakeContext()
+    const { ctx, liveCards } = fakeContext()
     const store = createSidebarStore()
     const service = createBetterSidebarService(store)
     const first = createSidechainClientRuntime(ctx, service, store)
     const disposeFirst = registerBuiltins(ctx, service, { sidechain: first.tab })
+    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
     disposeFirst()
     first.dispose()
+    expect(liveCards()).toHaveLength(0)
 
     const second = createSidechainClientRuntime(ctx, service, store)
     const disposeSecond = registerBuiltins(ctx, service, { sidechain: second.tab })
     expect(service.getTabs().filter(tab => tab.id === 'sidechain')).toHaveLength(1)
+    expect(liveCards().map(entry => entry.options.key).sort()).toEqual(['btw', 'side'])
     disposeSecond()
     second.dispose()
+    expect(liveCards()).toHaveLength(0)
   })
 })

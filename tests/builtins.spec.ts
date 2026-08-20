@@ -6,7 +6,7 @@
  * previews are NOT built in — they moved to the recommended office plugin,
  * see src/client/plugins-viewers.ts.)
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 // First import: browser globals before the xterm-carrying builtin graph loads.
 import './browser-globals.ts'
 
@@ -17,6 +17,7 @@ import { allLeaves } from '../src/client/state.ts'
 import { registerBuiltins } from '../src/client/builtins/index.ts'
 import type { BuiltinTabOptions } from '../src/client/builtins/tabs.tsx'
 import { t } from '../src/client/locales.ts'
+import { createSidechainTab } from '../src/client/sidechain/register.tsx'
 
 function setup(options: BuiltinTabOptions = {}): { service: ReturnType<typeof createBetterSidebarService>; store: ReturnType<typeof createSidebarStore>; dispose: () => void } {
   const store = createSidebarStore()
@@ -248,5 +249,63 @@ describe('built-in disposer', () => {
     expect(service.getFileViewers()).toHaveLength(0)
     // The disposer is idempotent.
     dispose()
+  })
+
+  it('rolls back this registration when a pre-existing tab rejects the descriptor', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const existing = service.registerTab(createSidechainTab({ controller: {} as never, history: {} as never }))
+
+    expect(() => registerBuiltins({} as Context, service, {
+      sidechain: { controller: {} as never, history: {} as never },
+    })).toThrow(/already registered/)
+
+    expect(service.getTabs().map(tab => tab.id)).toEqual(['sidechain'])
+    existing()
+  })
+
+  it('rolls back tabs and prior viewers when a viewer registration rejects', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const existing = service.registerFileViewer({
+      id: 'existing-viewer', exts: ['existing'], fetchStrategy: 'none', component: () => null,
+    })
+    const originalRegister = service.registerFileViewer.bind(service)
+    let calls = 0
+    vi.spyOn(service, 'registerFileViewer').mockImplementation((viewer) => {
+      calls++
+      if (calls === 3) throw new Error('viewer registration failed')
+      return originalRegister(viewer)
+    })
+
+    expect(() => registerBuiltins({} as Context, service)).toThrow('viewer registration failed')
+    expect(service.getTabs()).toHaveLength(0)
+    expect(service.getFileViewers().map(viewer => viewer.id)).toEqual(['existing-viewer'])
+    existing()
+  })
+
+  it('disposes successful registrations in reverse order and remains idempotent', () => {
+    const store = createSidebarStore()
+    const service = createBetterSidebarService(store)
+    const events: string[] = []
+    const originalRegisterTab = service.registerTab.bind(service)
+    const originalRegisterViewer = service.registerFileViewer.bind(service)
+    vi.spyOn(service, 'registerTab').mockImplementation((descriptor) => {
+      const dispose = originalRegisterTab(descriptor)
+      return () => { events.push(`tab:${descriptor.id}`); dispose() }
+    })
+    vi.spyOn(service, 'registerFileViewer').mockImplementation((descriptor) => {
+      const dispose = originalRegisterViewer(descriptor)
+      return () => { events.push(`viewer:${descriptor.id}`); dispose() }
+    })
+
+    const dispose = registerBuiltins({} as Context, service)
+    dispose()
+    dispose()
+    expect(events).toEqual([
+      'viewer:binary-download', 'viewer:code', 'viewer:html', 'viewer:markdown',
+      'viewer:pdf', 'viewer:image', 'tab:diff', 'tab:browser', 'tab:terminal',
+      'tab:subagent', 'tab:git', 'tab:editor',
+    ])
   })
 })

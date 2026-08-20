@@ -71,13 +71,9 @@ export function apply(ctx: Context): void {
   ctx.provide('betterSidebar', service)
   // Sidechain owns one activation-scoped controller/history pair. Create it
   // after the service/store exist but before builtins registers the descriptor;
-  // the runtime disposer is registered first so builtins tears down its
-  // descriptor before the shared dependencies on fiber disposal.
+  // the runtime is disposed by the same lifecycle effect as builtins, after
+  // descriptor cleanup has completed.
   const sidechainRuntime = createSidechainClientRuntime(ctx, service, sidebarStore)
-  ctx.effect(
-    () => () => { sidechainRuntime.dispose() },
-    'dsh-better-sidebar: sidechain runtime',
-  )
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
   // instead of "Terminal 1". Start with a safe fallback and replace it as
   // soon as the host shell info resolves. Tabs created before the response
@@ -102,10 +98,22 @@ export function apply(ctx: Context): void {
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
   ctx.effect(
-    () => registerBuiltins(ctx, service, {
-      terminalTitle: () => terminalTitle,
-      sidechain: sidechainRuntime.tab,
-    }),
+    () => {
+      let disposeBuiltins: (() => void) | undefined
+      try {
+        disposeBuiltins = registerBuiltins(ctx, service, {
+          terminalTitle: () => terminalTitle,
+          sidechain: sidechainRuntime.tab,
+        })
+      } catch (error) {
+        sidechainRuntime.dispose()
+        throw error
+      }
+      return () => {
+        disposeBuiltins?.()
+        sidechainRuntime.dispose()
+      }
+    },
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
   // A failure anywhere in the client lifecycle must never take the app down
