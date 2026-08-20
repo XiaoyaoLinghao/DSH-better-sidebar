@@ -335,7 +335,7 @@ describe('SidechainView list shell', () => {
     })))
     await act(async () => { await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(1)
-    await act(async () => { vi.advanceTimersByTime(3000); await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
     unmount(mounted.root, mounted.container)
   })
@@ -419,7 +419,7 @@ describe('SidechainView list shell', () => {
     await act(async () => { vi.advanceTimersByTime(9000); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(1)
     await act(async () => { resolveFirst(transcriptSnapshot()); await first })
-    await act(async () => { vi.advanceTimersByTime(3000); await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
     unmount(mounted.root, mounted.container)
   })
@@ -438,7 +438,7 @@ describe('SidechainView list shell', () => {
     act(() => { mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-transcript-retry]')!.click() })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
-    await act(async () => { vi.advanceTimersByTime(2999); await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(999); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
     await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(3)
@@ -682,7 +682,7 @@ describe('SidechainView list shell', () => {
     act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
     await act(async () => { await Promise.resolve(); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
-    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve() })
+    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
     expect(fetchTranscript).toHaveBeenCalledTimes(3)
     expect(mounted.container.textContent).toContain('confirmed')
 
@@ -753,6 +753,90 @@ describe('SidechainView list shell', () => {
       'exact prompt',
       expect.any(AbortSignal),
     )
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('establishes a missing baseline from the first post-admission snapshot before confirming later history', async () => {
+    vi.useFakeTimers()
+    let resolveInitial!: (snapshot: Awaited<ReturnType<SidechainHistory['fetchTranscript']>>) => void
+    const initial = new Promise<Awaited<ReturnType<SidechainHistory['fetchTranscript']>>>(resolve => { resolveInitial = resolve })
+    const oldSnapshot = transcriptSnapshot([{ kind: 'assistant', seq: 1, text: 'old' }])
+    const newSnapshot = transcriptSnapshot([
+      { kind: 'assistant', seq: 1, text: 'old' },
+      { kind: 'user', seq: 2, text: 'new' },
+    ])
+    const fetchTranscript = vi.fn()
+      .mockReturnValueOnce(initial)
+      .mockResolvedValueOnce(oldSnapshot)
+      .mockResolvedValueOnce(oldSnapshot)
+      .mockResolvedValueOnce(newSnapshot)
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { fetchTranscript, sendPrompt },
+    })))
+    expect(fetchTranscript).toHaveBeenCalledTimes(1)
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    setInputValue(input, 'ask')
+    act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(3)
+    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(4)
+    expect(mounted.container.textContent).toContain('new')
+    await act(async () => { resolveInitial(oldSnapshot); await initial })
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('hard-bounds unchanged confirmation reads to eight calls and does not restart budget on activity changes', async () => {
+    vi.useFakeTimers()
+    const oldSnapshot = transcriptSnapshot([{ kind: 'assistant', seq: 1, text: 'old' }])
+    const fetchTranscript = vi.fn(async () => oldSnapshot)
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side', 'continuable', 'running')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { fetchTranscript, sendPrompt },
+    })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    setInputValue(input, 'ask')
+    act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const confirmationStart = fetchTranscript.mock.calls.length
+    act(() => {
+      sessionFeed.set({ ...sessionFeed.list.getSnapshot(), subagentsByParent: { parent: catalog({ entries: [child('side', 'continuable', 'inactive')] }) } })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+    expect(fetchTranscript.mock.calls.length - confirmationStart).toBeLessThanOrEqual(8)
+    const bounded = fetchTranscript.mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(fetchTranscript.mock.calls.length).toBe(bounded)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('uses one transcript scheduler while confirmation takes priority over normal running polling', async () => {
+    vi.useFakeTimers()
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    const fetchTranscript = vi.fn(async () => transcriptSnapshot([{ kind: 'assistant', seq: 1, text: 'old' }]))
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side', 'continuable', 'running')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { fetchTranscript, sendPrompt },
+    })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const setTimeoutsBefore = setTimeoutSpy.mock.calls.length
+    const clearTimeoutsBefore = clearTimeoutSpy.mock.calls.length
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    setInputValue(input, 'ask')
+    act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(setTimeoutSpy.mock.calls.length - setTimeoutsBefore).toBe(1)
+    expect(clearTimeoutSpy.mock.calls.length - clearTimeoutsBefore).toBe(1)
+    setTimeoutSpy.mockRestore()
+    clearTimeoutSpy.mockRestore()
     unmount(mounted.root, mounted.container)
   })
 })

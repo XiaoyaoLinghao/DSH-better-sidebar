@@ -32,6 +32,7 @@ import css from './SidechainView.module.css'
 const ACTIVITY_POLL_MS = 3000
 const CONFIRMATION_POLL_MS = 250
 const CONFIRMATION_MAX_ATTEMPTS = 8
+const TRANSCRIPT_POLL_MS = 1000
 const EMPTY_ENTRIES: readonly CatalogEntry[] = []
 
 export interface SidechainViewProps {
@@ -59,10 +60,13 @@ interface TranscriptState {
   snapshot: SidechainTranscriptSnapshot | undefined
 }
 
-interface ConfirmationState {
+interface ConfirmationToken {
   owner: string
-  baseline: string
-  token: number
+  parentSessionId: string
+  childSessionId: string
+  baseline: string | undefined
+  remaining: number
+  generation: number
 }
 
 function transcriptFingerprint(snapshot: SidechainTranscriptSnapshot | undefined): string {
@@ -220,9 +224,8 @@ export function SidechainView(props: SidechainViewProps) {
   transcriptRef.current = transcript
   const transcriptEpoch = useRef(0)
   const [transcriptRetryNonce, setTranscriptRetryNonce] = useState(0)
-  const [confirmation, setConfirmation] = useState<ConfirmationState | undefined>(undefined)
-  const confirmationToken = useRef(0)
-  const completedConfirmation = useRef<number | undefined>(undefined)
+  const confirmation = useRef<ConfirmationToken | undefined>(undefined)
+  const confirmationGeneration = useRef(0)
 
   const [draft, setDraft] = useState('')
   const [promptError, setPromptError] = useState(false)
@@ -240,8 +243,7 @@ export function SidechainView(props: SidechainViewProps) {
     setDraft(selectedKey === undefined ? '' : drafts.current.get(selectedKey) ?? '')
     setPromptError(false)
     setSending(false)
-    completedConfirmation.current = undefined
-    setConfirmation(undefined)
+    confirmation.current = undefined
     submitInFlight.current = false
     submitAbort.current?.abort()
     submitAbort.current = undefined
@@ -261,8 +263,7 @@ export function SidechainView(props: SidechainViewProps) {
     submitAbort.current?.abort()
     submitAbort.current = undefined
     submitInFlight.current = false
-    completedConfirmation.current = undefined
-    setConfirmation(undefined)
+    confirmation.current = undefined
     setSending(false)
   }, [visible])
 
@@ -276,8 +277,9 @@ export function SidechainView(props: SidechainViewProps) {
     const previousTranscript = transcriptRef.current.owner === owner
       ? transcriptRef.current.snapshot
       : undefined
-    completedConfirmation.current = undefined
-    setConfirmation(undefined)
+    const hadConfirmation = confirmation.current !== undefined
+    confirmation.current = undefined
+    if (hadConfirmation) setTranscriptRetryNonce(value => value + 1)
     const abort = new AbortController()
     const address: SidechainContinuableAddress = {
       parentSessionId,
@@ -306,11 +308,15 @@ export function SidechainView(props: SidechainViewProps) {
       drafts.current.delete(owner)
       setDraft('')
       setPromptError(false)
-      setConfirmation({
+      confirmation.current = {
         owner,
-        baseline: transcriptFingerprint(previousTranscript),
-        token: ++confirmationToken.current,
-      })
+        parentSessionId,
+        childSessionId: selected.id,
+        baseline: previousTranscript === undefined ? undefined : transcriptFingerprint(previousTranscript),
+        remaining: CONFIRMATION_MAX_ATTEMPTS,
+        generation: ++confirmationGeneration.current,
+      }
+      setTranscriptRetryNonce(value => value + 1)
     }).catch(() => {
       if (submitEpoch.current === epoch && !abort.signal.aborted && visible) setPromptError(true)
     }).finally(() => {
@@ -335,32 +341,36 @@ export function SidechainView(props: SidechainViewProps) {
     const abort = new AbortController()
     let disposed = false
     let inFlight = false
-    const activeConfirmation = confirmation?.owner === selectedKey
-      && confirmation.token !== completedConfirmation.current
-      ? confirmation
-      : undefined
-    let confirmationAttempts = 0
-    let confirmationTimer: ReturnType<typeof globalThis.setInterval> | undefined
-    let confirmationActive = activeConfirmation !== undefined
-    const stopConfirmation = (): void => {
-      confirmationActive = false
-      if (confirmationTimer !== undefined) {
-        globalThis.clearInterval(confirmationTimer)
-        confirmationTimer = undefined
-      }
-      if (activeConfirmation !== undefined) completedConfirmation.current = activeConfirmation.token
-    }
+    let timer: ReturnType<typeof globalThis.setTimeout> | undefined
     const current = (): boolean => !disposed && transcriptEpoch.current === epoch
+    const activeConfirmation = (): ConfirmationToken | undefined => {
+      const token = confirmation.current
+      return token !== undefined
+        && token.owner === selectedKey
+        && token.parentSessionId === parentSessionId
+        && token.childSessionId === selected.id
+        ? token
+        : undefined
+    }
     const read = async (): Promise<void> => {
       if (!current() || inFlight) return
+      const token = activeConfirmation()
+      if (token !== undefined) token.remaining--
       inFlight = true
       try {
         const snapshot = await history.fetchTranscript(address, abort.signal)
         if (current()) {
           setTranscript({ owner: selectedKey, status: 'ready', snapshot })
-          if (confirmationActive && activeConfirmation !== undefined
-            && transcriptFingerprint(snapshot) !== activeConfirmation.baseline) {
-            stopConfirmation()
+          if (token !== undefined && confirmation.current === token) {
+            const fingerprint = transcriptFingerprint(snapshot)
+            if (token.baseline === undefined) {
+              token.baseline = fingerprint
+            } else if (fingerprint !== token.baseline) {
+              confirmation.current = undefined
+            }
+            if (token.remaining <= 0) {
+              confirmation.current = undefined
+            }
           }
         }
       } catch {
@@ -377,27 +387,27 @@ export function SidechainView(props: SidechainViewProps) {
     // StrictMode, visibility, status, and retry transitions) must not suppress
     // that read based on a prior effect identity.
     setTranscript({ owner: selectedKey, status: 'loading', snapshot: undefined })
-    void read()
-    const timer = selected.activity === 'running'
-      ? globalThis.setInterval(() => { void read() }, ACTIVITY_POLL_MS)
-      : undefined
-    if (confirmationActive) {
-      confirmationTimer = globalThis.setInterval(() => {
-        if (++confirmationAttempts > CONFIRMATION_MAX_ATTEMPTS) {
-          stopConfirmation()
-          return
-        }
-        void read()
-      }, CONFIRMATION_POLL_MS)
+    const schedule = (): void => {
+      if (!current() || timer !== undefined) return
+      const delay = activeConfirmation() !== undefined
+        ? CONFIRMATION_POLL_MS
+        : selected.activity === 'running' ? TRANSCRIPT_POLL_MS : undefined
+      if (delay === undefined) return
+      timer = globalThis.setTimeout(() => {
+        timer = undefined
+        if (activeConfirmation() === undefined && selected.activity !== 'running') return
+        void read().finally(schedule)
+      }, delay)
     }
+    void read()
+    schedule()
     return () => {
       disposed = true
       transcriptEpoch.current++
       abort.abort()
-      if (timer !== undefined) globalThis.clearInterval(timer)
-      if (confirmationTimer !== undefined) globalThis.clearInterval(confirmationTimer)
+      if (timer !== undefined) globalThis.clearTimeout(timer)
     }
-  }, [confirmation, history, parentSessionId, selected?.activity, selected?.id, selected?.mode, selectedKey, transcriptRetryNonce, visible])
+  }, [history, parentSessionId, selected?.activity, selected?.id, selected?.mode, selectedKey, transcriptRetryNonce, visible])
 
   if (selectedChildId !== undefined && selected !== undefined) {
     const selectedTranscript = transcript.owner === selectedKey ? transcript : {
