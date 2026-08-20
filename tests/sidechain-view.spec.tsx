@@ -31,6 +31,12 @@ function unmount(root: Root, container: HTMLElement): void {
   container.remove()
 }
 
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+}
+
 function feed(initial: SidebarSessionList) {
   let snapshot = initial
   const listeners = new Set<() => void>()
@@ -548,6 +554,108 @@ describe('SidechainView list shell', () => {
     })
     await act(async () => { vi.advanceTimersByTime(6000); await Promise.resolve() })
     expect(fetchActivity).toHaveBeenCalledTimes(1)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('renders a localized read-only footer for one-shot children and rejects trimmed-empty prompts', async () => {
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('btw', 'one-shot')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'btw' }, history: { sendPrompt },
+    })))
+    await act(async () => { await Promise.resolve() })
+    expect(mounted.container.querySelector('[data-sidechain-read-only]')?.textContent)
+      .toContain(getSidechainLabels().sidechainReadOnly)
+    expect(mounted.container.querySelector('[data-sidechain-composer]')).toBeNull()
+
+    const sessionFeed2 = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted2 = mount(createElement(SidechainView, props(sessionFeed2, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { sendPrompt },
+    })))
+    const input = mounted2.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    const form = mounted2.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!
+    act(() => {
+      setInputValue(input, '   ')
+      form.requestSubmit()
+    })
+    expect(sendPrompt).not.toHaveBeenCalled()
+    unmount(mounted.root, mounted.container)
+    unmount(mounted2.root, mounted2.container)
+  })
+
+  it('keeps continuation single-flight across button and Enter submission', async () => {
+    let resolvePrompt!: (value: boolean) => void
+    const pending = new Promise<boolean>(resolve => { resolvePrompt = resolve })
+    const sendPrompt = vi.fn(() => pending)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { sendPrompt },
+    })))
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    const form = mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!
+    const submit = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-composer-submit]')!
+    act(() => {
+      setInputValue(input, 'continue this')
+      submit.click()
+      form.requestSubmit()
+    })
+    expect(sendPrompt).toHaveBeenCalledTimes(1)
+    expect(submit.disabled).toBe(true)
+    await act(async () => { resolvePrompt(true); await pending })
+    expect(input.value).toBe('')
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('preserves a failed draft for retry and refreshes from the transcript source of truth after admission', async () => {
+    const sendPrompt = vi.fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+    const fetchTranscript = vi.fn(async () => transcriptSnapshot())
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { sendPrompt, fetchTranscript },
+    })))
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    const form = mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!
+    act(() => {
+      setInputValue(input, 'please continue')
+      form.requestSubmit()
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(input.value).toBe('please continue')
+    expect(mounted.container.textContent).toContain(getSidechainLabels().sidechainPromptFailed)
+
+    act(() => { form.requestSubmit() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(sendPrompt).toHaveBeenCalledTimes(2)
+    expect(input.value).toBe('')
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    expect(mounted.container.querySelector('[data-transcript-kind="user"]')).toBeNull()
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('aborts and ignores a stale continuation after selection changes', async () => {
+    let resolvePrompt!: (value: boolean) => void
+    const sendPrompt = vi.fn((_address: unknown, _text: string, signal: AbortSignal) => {
+      expect(signal).toBeInstanceOf(AbortSignal)
+      return new Promise<boolean>(resolve => { resolvePrompt = resolve })
+    })
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('old'), child('new')] }) } })
+    const initial = props(sessionFeed, { meta: { version: 1, selectedChildId: 'old' }, history: { sendPrompt } })
+    const mounted = mount(createElement(SidechainView, initial))
+    const oldInput = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    act(() => {
+      setInputValue(oldInput, 'old draft')
+      mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit()
+    })
+    const signal = sendPrompt.mock.calls[0]?.[2] as AbortSignal
+    mounted.rerender(createElement(SidechainView, {
+      ...initial, tab: { ...initial.tab, meta: { version: 1, selectedChildId: 'new' } },
+    }))
+    expect(signal.aborted).toBe(true)
+    expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('')
+    await act(async () => { resolvePrompt(true); await Promise.resolve() })
+    expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('')
     unmount(mounted.root, mounted.container)
   })
 })

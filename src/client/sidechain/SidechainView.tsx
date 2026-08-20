@@ -23,6 +23,7 @@ import type {
 import { parseSidechainMeta, type SidechainController } from './controller.ts'
 import type { SidechainHistory } from './history.ts'
 import type { SidechainTranscriptSnapshot } from './history.ts'
+import type { SidechainContinuableAddress } from './history.ts'
 import { fileMentionsFor } from './file-mentions.ts'
 import { TranscriptRows } from './TranscriptRows.tsx'
 import { getSidechainLabels, t } from '../locales.ts'
@@ -205,6 +206,86 @@ export function SidechainView(props: SidechainViewProps) {
   const transcriptEpoch = useRef(0)
   const [transcriptRetryNonce, setTranscriptRetryNonce] = useState(0)
 
+  const [draft, setDraft] = useState('')
+  const [promptError, setPromptError] = useState(false)
+  const [sending, setSending] = useState(false)
+  const submitEpoch = useRef(0)
+  const submitAbort = useRef<AbortController | undefined>(undefined)
+  const submitInFlight = useRef(false)
+
+  // Drafts and submissions belong to one selected child lifecycle. A child
+  // switch aborts the old request and clears its draft, so no prompt can leak
+  // into a different conversation.
+  useEffect(() => {
+    setDraft('')
+    setPromptError(false)
+    setSending(false)
+    submitInFlight.current = false
+    submitAbort.current?.abort()
+    submitAbort.current = undefined
+    return () => {
+      submitEpoch.current++
+      submitAbort.current?.abort()
+      submitAbort.current = undefined
+      submitInFlight.current = false
+    }
+  }, [selectedKey])
+
+  // Visibility owns the request lifetime too. Keep an unsent draft while a
+  // tab is hidden, but never allow a hidden submission to settle into state.
+  useEffect(() => {
+    if (visible) return
+    submitEpoch.current++
+    submitAbort.current?.abort()
+    submitAbort.current = undefined
+    submitInFlight.current = false
+    setSending(false)
+  }, [visible])
+
+  const submitPrompt = useCallback(() => {
+    if (!visible || selected === undefined || selected.mode !== 'continuable') return
+    const text = draft.trim()
+    if (text === '' || submitInFlight.current) return
+
+    const epoch = submitEpoch.current
+    const abort = new AbortController()
+    const address: SidechainContinuableAddress = {
+      parentSessionId,
+      childSessionId: selected.id,
+      mode: 'continuable',
+    }
+    submitInFlight.current = true
+    submitAbort.current = abort
+    setSending(true)
+    setPromptError(false)
+
+    let request: Promise<boolean>
+    try {
+      request = Promise.resolve(history.sendPrompt(address, text, abort.signal))
+    } catch {
+      request = Promise.resolve(false)
+    }
+    void request.then(admitted => {
+      if (submitEpoch.current !== epoch || abort.signal.aborted || !visible) return
+      if (!admitted) {
+        setPromptError(true)
+        return
+      }
+      // The durable child history is the source of truth. Clear only after
+      // admission and force a fresh read; never append an optimistic row.
+      setDraft('')
+      setPromptError(false)
+      setTranscriptRetryNonce(value => value + 1)
+    }).catch(() => {
+      if (submitEpoch.current === epoch && !abort.signal.aborted && visible) setPromptError(true)
+    }).finally(() => {
+      if (submitEpoch.current !== epoch) return
+      submitInFlight.current = false
+      if (submitAbort.current === abort) submitAbort.current = undefined
+      setSending(false)
+    })
+  }, [draft, history, parentSessionId, selected, visible])
+
   // A transcript belongs to exactly one selected-child lifecycle. The same
   // epoch guards both timer reads and late promises after selection/hide.
   useEffect(() => {
@@ -293,6 +374,44 @@ export function SidechainView(props: SidechainViewProps) {
             />
           </div>
         )}
+        <div className={css.sidechainFooter} data-sidechain-footer>
+          {selected.mode === 'one-shot' ? (
+            <div className={css.sidechainReadOnly} data-sidechain-read-only role="status">
+              {labels.sidechainReadOnly}
+            </div>
+          ) : (
+            <form
+              className={css.sidechainComposer}
+              data-sidechain-composer
+              onSubmit={event => { event.preventDefault(); submitPrompt() }}
+              aria-busy={sending}
+            >
+              <input
+                className={css.sidechainComposerInput}
+                data-sidechain-composer-input
+                type="text"
+                value={draft}
+                placeholder={labels.sidechainPromptPlaceholder}
+                aria-label={labels.sidechainPromptPlaceholder}
+                disabled={sending}
+                onChange={event => {
+                  setDraft(event.currentTarget.value)
+                  if (promptError) setPromptError(false)
+                }}
+              />
+              <button
+                className={css.sidechainComposerSubmit}
+                data-sidechain-composer-submit
+                type="submit"
+                aria-label={sending ? labels.sidechainSending : labels.sidechainSend}
+                disabled={sending}
+              >
+                {sending ? labels.sidechainSending : labels.sidechainSend}
+              </button>
+              {promptError && <span className={css.sidechainPromptError} role="alert">{labels.sidechainPromptFailed}</span>}
+            </form>
+          )}
+        </div>
       </div>
     )
   }

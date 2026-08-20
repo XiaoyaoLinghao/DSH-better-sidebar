@@ -243,6 +243,73 @@
   overflow: auto;
 }
 
+.sidechainFooter {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-line-light);
+}
+
+.sidechainReadOnly {
+  padding: 4px 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  text-align: center;
+}
+
+.sidechainComposer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidechainComposerInput {
+  flex: 1 1 120px;
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--dsw-alias-line-light);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
+.sidechainComposerInput:focus-visible {
+  border-color: var(--dsw-alias-button-primary-fill);
+  outline: 2px solid var(--dsw-alias-button-primary-fill);
+  outline-offset: 1px;
+}
+
+.sidechainComposerSubmit {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 9px;
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  font: var(--dsw-font-xxs-12);
+}
+
+.sidechainComposerSubmit:hover:not(:disabled),
+.sidechainComposerSubmit:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.sidechainComposerSubmit:disabled,
+.sidechainComposerInput:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.sidechainPromptError {
+  flex-basis: 100%;
+  color: var(--dsw-alias-state-error-primary);
+  font: var(--dsw-font-xxs-12);
+}
+
 .sidechainRowSecondary {
   overflow: hidden;
   text-overflow: ellipsis;
