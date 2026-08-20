@@ -105,16 +105,43 @@ async function seedSession(): Promise<void> {
 async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
   const settingsButton = page.locator(
     'button:has([data-slot="settings.trigger"])',
-  ).first()
+  )
   await expect(settingsButton, 'the DSH shell must expose its Settings entry').toHaveCount(1, { timeout: 30_000 })
   await settingsButton.click()
   const dialog = page.getByRole('dialog').last()
-  const sideCard = dialog.locator('[data-dsh-better-sidebar-settings-nav]').first()
+  const sideCard = dialog.locator('[data-dsh-better-sidebar-settings-nav]')
   await expect(sideCard, 'the plugin must register a Side card settings section').toHaveCount(1, { timeout: 30_000 })
   await sideCard.click()
   const sidechainCard = dialog.locator('button[aria-pressed][title="sidechain"]')
   await expect(sidechainCard, 'the Side card must render the Sidechain enable card').toHaveCount(1, { timeout: 30_000 })
   return sidechainCard
+}
+
+/** Dismiss keyless DSH onboarding takeovers; the provider dialog reappears
+ * after every reload while no credential is configured. */
+async function dismissOnboarding(page: Page): Promise<void> {
+  try {
+    await expect
+      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .toBeGreaterThan(0)
+  } catch {
+    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
+  }
+  for (let round = 0; round < 8; round++) {
+    let dismissed = false
+    for (const name of ['Continue', 'Configure later']) {
+      const button = page.getByRole('button', { name, exact: true }).first()
+      if ((await button.count()) === 0) continue
+      try {
+        await button.click({ timeout: 4_000 })
+        dismissed = true
+        await page.waitForTimeout(1_000)
+      } catch {
+        // Masked by the takeover stacked above it; the next round retries.
+      }
+    }
+    if (!dismissed) break
+  }
 }
 
 /** Close the native Settings dialog after exercising its real controls. */
@@ -159,38 +186,8 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   // (data-dsh-panel-host). Its presence is part of the injection contract.
   await expect(page.locator('[data-dsh-panel-host]')).toBeAttached({ timeout: 90_000 })
 
-  // A keyless boot stacks onboarding takeovers that mask the whole shell: a
-  // versioned welcome notice ("Continue", persists its acknowledgement to
-  // settings) and, once that is acknowledged, a provider-config dialog
-  // ("Configure later", session-only — always present while no credential is
-  // configured). Both mount only after the settings join resolves. Wait
-  // (bounded) for one to appear; a DSH build without onboarding proceeds
-  // straight to the sweep.
-  try {
-    await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
-  }
-  // Dismiss whatever takeover is present, in any stacking order, until none
-  // remain — a masked click is retried next round instead of failing.
-  for (let round = 0; round < 8; round++) {
-    let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
-      const button = page.getByRole('button', { name, exact: true }).first()
-      if ((await button.count()) === 0) continue
-      try {
-        await button.click({ timeout: 4_000 })
-        dismissed = true
-        await page.waitForTimeout(1_000)
-      } catch {
-        // Masked by the takeover stacked above it; the next round tries the
-        // other button first.
-      }
-    }
-    if (!dismissed) break
-  }
+  // A keyless boot stacks onboarding takeovers that mask the whole shell.
+  await dismissOnboarding(page)
 
   // The seeded session must give the sidebar a session scope: without it the
   // shell renders a disabled toggle cluster and the tab sweep is impossible.
@@ -277,6 +274,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.keyboard.press('Escape')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
+  await dismissOnboarding(page)
   await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })
   const disabledNewTab = page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'New tab' }).first()
   await disabledNewTab.click()
@@ -295,6 +293,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
   await page.keyboard.press('Escape')
 
   await page.reload({ waitUntil: 'domcontentloaded' })
+  await dismissOnboarding(page)
   const restoredSidebar = page.locator('[data-dsh-better-sidebar]')
   await expect(restoredSidebar).toHaveCount(1, { timeout: 90_000 })
   const restoredNewTab = restoredSidebar.getByRole('button', { name: 'New tab' }).first()
@@ -346,6 +345,7 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     selectedChildId: 'mount-missing-child',
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
+  await dismissOnboarding(page)
   await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })
   await expect(page.locator('[data-sidechain-view]')).toHaveCount(1, { timeout: 90_000 })
   await assertNoCrash()
