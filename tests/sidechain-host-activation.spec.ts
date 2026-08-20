@@ -15,6 +15,7 @@ interface Harness {
   commandDisposers: Array<ReturnType<typeof vi.fn>>
   registered: unknown[]
   eventRegistrations: Array<[string, unknown]>
+  agentsOn: ReturnType<typeof vi.fn>
   subagents: {
     start: ReturnType<typeof vi.fn>
   }
@@ -40,10 +41,11 @@ function makeHarness(options: {
   const eventRegistrations: Array<[string, unknown]> = []
   const agentCreatedDisposer = options.agentCreatedDisposer ?? vi.fn()
   const genericListenerDisposer = options.genericListenerDisposer ?? vi.fn()
-  const agents = {
-    list: () => options.liveAgents ?? [],
-    on: vi.fn(() => genericListenerDisposer),
-  }
+  const agentsOn = vi.fn((event: string, handler: unknown) => {
+    eventRegistrations.push([event, handler])
+    return event === 'agent/created' ? agentCreatedDisposer : genericListenerDisposer
+  })
+  const agents = { list: () => options.liveAgents ?? [], on: agentsOn }
   const subagents = {
     start: vi.fn(),
     startContinuable: vi.fn(),
@@ -62,10 +64,10 @@ function makeHarness(options: {
     const cleanup = fn()
     if (typeof cleanup === 'function') cleanups.push(cleanup)
   })
-  const on = vi.fn((event: string, handler: unknown) => {
-    eventRegistrations.push([event, handler])
-    return event === 'agent/created' ? agentCreatedDisposer : genericListenerDisposer
-  })
+  // The production runtime listens to this event bus through its context;
+  // delegate the context facade to agents.on so the event-specific disposer
+  // is owned and observed on the service fake itself.
+  const on = vi.fn((event: string, handler: unknown) => agents.on(event, handler))
   const inject = vi.fn((deps: string[], callback: (ctx: any) => void) => {
     if (deps.includes('agents') && deps.includes('subagents')) {
       if (options.subagents === false) return
@@ -92,7 +94,7 @@ function makeHarness(options: {
       })
     }
   })
-  return { ctx: { inject, effect }, cleanups, commandDisposers, registered, eventRegistrations, subagents }
+  return { ctx: { inject, effect }, cleanups, commandDisposers, registered, eventRegistrations, agentsOn, subagents }
 }
 
 function makeApplyContext() {
@@ -234,6 +236,7 @@ describe('sidechain host activation', () => {
     expect(agent.inject).not.toBe(originals.inject)
     for (const cleanup of harness.cleanups) cleanup()
     expect(harness.commandDisposers.every(dispose => dispose.mock.calls.length === 1)).toBe(true)
+    expect(harness.agentsOn).toHaveBeenCalledWith('agent/created', expect.any(Function))
     expect(harness.eventRegistrations).toEqual([
       ['agent/created', expect.any(Function)],
     ])
