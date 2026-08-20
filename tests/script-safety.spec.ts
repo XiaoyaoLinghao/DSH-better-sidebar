@@ -253,18 +253,21 @@ describe('verification script scratch safety', () => {
   it('launches a Windows .cmd shim with metacharacter arguments unchanged', async () => {
     if (process.platform !== 'win32') return
     const { sandbox } = createSandbox()
-    const shim = join(sandbox, 'explicit-override.cmd')
-    const capture = join(sandbox, 'capture.mjs')
-    const output = join(sandbox, 'argv.json')
-    const pidFile = join(sandbox, 'shim.pid')
-    const logFile = join(sandbox, 'shim.log')
-    writeFileSync(capture, 'import fs from "node:fs"; fs.writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)))\n')
-    writeFileSync(shim, '@echo off\r\nnode "%~dp0capture.mjs" "%~1" "%~2" "%~3" "%~4"\r\n')
+    const hostilePath = join(sandbox, 'path with & spaces')
+    mkdirSync(hostilePath)
+    const shim = join(hostilePath, 'explicit-override.cmd')
+    const capture = join(hostilePath, 'capture.mjs')
+    const output = join(hostilePath, 'argv.json')
+    const pidFile = join(hostilePath, 'shim.pid')
+    const logFile = join(hostilePath, 'shim.log')
+    const expected = ['%NAME%', '%PATH%', 'caret^x', 'bang!x', 'paren(x)', 'angle<in>', 'angle>out', 'alpha&beta', 'semi;pipe|', 'quoted"arg']
+    writeFileSync(capture, 'import fs from "node:fs"; fs.writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(4)))\n')
+    writeFileSync(shim, `@echo off\r\nnode "%~dp0capture.mjs" "%~dp0argv.json" %*\r\n`)
     try {
-      const launcher = invokeAsync(['launch', pidFile, logFile, shim, output, 'alpha&beta', 'quoted"arg', 'semi;pipe|'])
+      const launcher = invokeAsync(['launch', pidFile, logFile, shim, output, ...expected])
       await new Promise<void>((resolve) => launcher.once('exit', () => resolve()))
       expect(launcher.exitCode).toBe(0)
-      expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(['alpha&beta', 'quoted"arg', 'semi;pipe|'])
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected)
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }

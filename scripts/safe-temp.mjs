@@ -272,26 +272,24 @@ async function launch(pidFile, logFile, command, args) {
     (/(?:^|[\\/])[^\\/]+\.(?:cmd|bat)$/i.test(command) || /^(?:pnpm|npx|dsh)$/i.test(command))
     ? (/(?:\.(?:cmd|bat))$/i.test(command) ? command : `${command}.cmd`)
     : null
-  // Node cannot execute .cmd/.bat files directly.  The private wrapper keeps
-  // cmd.exe parsing under our control; every batch argument is quoted and
-  // escaped before cmd.exe parses it.
-  const executable = batchCommand ? (process.env.ComSpec || 'cmd.exe') : command
+  // Node cannot execute .cmd/.bat files directly. A private one-shot batch
+  // wrapper invokes the target with escaped literals and no CALL (CALL would
+  // trigger a second cmd expansion of the arguments).
+  const executable = command
   let childArgs = args
+  const childEnv = process.env
   let wrapper
   if (batchCommand) {
-    // Put the escaped invocation in a private one-shot batch file.  This
-    // avoids asking Node to quote a cmd.exe command line (which loses `&`,
-    // `|`, and literal quotes on Windows) while still preserving argv.
     wrapper = path.join(path.dirname(log), `.dsh-launch-${crypto.randomBytes(16).toString('hex')}.cmd`)
-    const invocation = ['call', quoteBatchLiteral(batchCommand), ...args.map(quoteBatchLiteral)].join(' ')
-    fs.writeFileSync(wrapper, `@echo off\r\n${invocation}\r\nexit /b %errorlevel%\r\n`, { flag: 'wx', mode: 0o600 })
-    childArgs = ['/d', '/c', wrapper]
+    const invocation = [quoteBatchLiteral(batchCommand), ...args.map(quoteBatchLiteral)].join(' ')
+    fs.writeFileSync(wrapper, `@echo off\r\n${invocation}\r\n`, { flag: 'wx', mode: 0o600 })
+    childArgs = ['/d', '/c', `""${wrapper}""`]
   }
-  const child = spawn(executable, childArgs, {
+  const child = spawn(batchCommand ? (process.env.ComSpec || 'cmd.exe') : executable, childArgs, {
     detached: process.platform !== 'win32',
-    env: process.env,
+    env: childEnv,
     stdio: ['ignore', fd, fd],
-    windowsVerbatimArguments: false,
+    windowsVerbatimArguments: Boolean(batchCommand),
   })
   fs.closeSync(fd)
   if (!child.pid) fail('failed to capture child pid')
@@ -314,9 +312,7 @@ async function launch(pidFile, logFile, command, args) {
 function quoteBatchLiteral(value) {
   const text = String(value)
   if (/[\0\r\n]/.test(text)) fail('batch command arguments cannot contain NUL or newlines')
-  // A literal quote is represented outside the surrounding quoted segment;
-  // `^"` inside a quoted segment is parsed as a command delimiter by cmd.exe.
-  return `"${text.replace(/%/g, '%%').replace(/\^/g, '^^').replace(/[|<>]/g, '^$&').replace(/"/g, '"^"')}"`
+  return `"${text.replace(/%/g, '%%').replace(/"/g, '"^"')}"`
 }
 
 function terminate(pidArg) {
