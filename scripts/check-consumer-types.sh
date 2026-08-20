@@ -8,7 +8,16 @@
 # resolve and type-check for a browser-only plugin author. Run AFTER
 # `pnpm build` (the check reads lib/types).
 set -euo pipefail
-cd "$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+cd "$ROOT"
+
+SAFE_TEMP="$SCRIPT_DIR/safe-temp.mjs"
+command -v node >/dev/null 2>&1 || {
+  echo "[check-consumer-types] FAIL: node is required for portable scratch/link handling." >&2
+  exit 1
+}
+TEMP_BASE="$(node -p "require('node:os').tmpdir()")"
 
 # The check reads the BUILT declaration surface (lib/types) — fail loudly
 # instead of silently passing when the build output is missing.
@@ -17,11 +26,18 @@ if [ ! -f lib/types/client/service.d.ts ]; then
   exit 1
 fi
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
+WORK="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' '.dsh-consumer-types.marker')"
+cleanup() {
+  local code=$?
+  if ! node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' '.dsh-consumer-types.marker'; then
+    echo "[check-consumer-types] WARNING: scratch cleanup refused; preserving $WORK" >&2
+  fi
+  exit "$code"
+}
+trap cleanup EXIT
 
 mkdir -p "$WORK/node_modules"
-ln -s "$(pwd)" "$WORK/node_modules/dsh-better-sidebar"
+node "$SAFE_TEMP" link "$ROOT" "$WORK/node_modules/dsh-better-sidebar"
 
 cat > "$WORK/check.ts" <<'EOF'
 import { SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from 'dsh-better-sidebar/client/service'

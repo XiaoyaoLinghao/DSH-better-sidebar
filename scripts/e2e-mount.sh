@@ -14,7 +14,7 @@
 #
 # 环境变量（均可省略）：
 #   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 npx 拉官方包
-#   TARBALL        插件 tarball；缺省仓库根 dsh-better-sidebar-*.tgz（须已 pack）
+#   TARBALL        插件 tarball；缺省先使用仓库根产物，否则自动 build + pack
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
 #                  新建本调用拥有的独立子目录，只写入/删除该子目录；调用方
@@ -25,8 +25,10 @@
 # =============================================================================
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+cd "$ROOT"
+SAFE_TEMP="$SCRIPT_DIR/safe-temp.mjs"
 
 DSH_CMD="${DSH_CMD:-dsh}"
 PORT="${PORT:-0}"
@@ -44,29 +46,30 @@ command -v pnpm >/dev/null 2>&1 || die "未找到 pnpm（dsh plugin 转发给 pn
 # dsh CLI 解析：PATH 上的 dsh 优先，否则 npx 拉官方包（同 scripts/install.sh）
 if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
   if command -v npx >/dev/null 2>&1; then
-    say "PATH 上无 $DSH_CMD，回退 npx -y --package @deepseek-ai/dsh"
-    DSH_CMD="npx -y --package @deepseek-ai/dsh dsh"
+    say "PATH 上无 $DSH_CMD，回退 npx -y --package @deepseek-ai/dsh@0.1.0-rc.8"
+    DSH_MODE=npx
   else
     die "未找到 $DSH_CMD 或 npx；请先安装 DSH CLI（npm i -g @deepseek-ai/dsh）或用 DSH_CMD 指定"
   fi
+else
+  DSH_MODE=path
 fi
 
-# tarball 解析
-if [ -z "$TARBALL" ]; then
-  TARBALL="$(ls "$ROOT"/dsh-better-sidebar-*.tgz 2>/dev/null | head -1 || true)"
-fi
-[ -n "$TARBALL" ] && [ -f "$TARBALL" ] || die "找不到 tarball（TARBALL 或 \$ROOT/dsh-better-sidebar-*.tgz）——先运行 pnpm build && pnpm pack"
-TARBALL="$(cd "$(dirname "$TARBALL")" && pwd)/$(basename "$TARBALL")"
-say "tarball: $TARBALL"
+run_dsh() {
+  if [ "$DSH_MODE" = npx ]; then
+    npx -y --package "@deepseek-ai/dsh@0.1.0-rc.8" dsh "$@"
+  else
+    "$DSH_CMD" "$@"
+  fi
+}
 
 # scratch home（每次全新，绝不触碰真实 ~/.dsh）：调用方给了 DSH_HOME_BASE
 # 时，只在其下新建本调用拥有的子目录并只删除该子目录；缺省时直接用系统
 # 临时目录。
-if [ -n "${DSH_HOME_BASE:-}" ]; then
-  SCRATCH="$(mktemp -d "$DSH_HOME_BASE/dsh-e2e-mount.XXXXXX")"
-else
-  SCRATCH="$(mktemp -d /tmp/dsh-e2e-mount.XXXXXX)"
-fi
+TEMP_BASE="${DSH_HOME_BASE:-}"
+if [ -z "$TEMP_BASE" ]; then TEMP_BASE="$(node -p "require('node:os').tmpdir()")"; fi
+SCRATCH="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' '.dsh-e2e-mount.marker')" \
+  || die "无法创建受保护的 scratch 目录"
 export DSH_HOME="$SCRATCH/home"
 WORKSPACE_DIR="$SCRATCH/workspace"
 LOG_DIR="$SCRATCH"
@@ -82,13 +85,40 @@ cleanup() {
     wait "$SERVER_PID" 2>/dev/null || true
   fi
   if [ -z "${KEEP_HOME:-}" ]; then
-    rm -rf "$SCRATCH"
+    if ! node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' '.dsh-e2e-mount.marker'; then
+      warn "scratch 安全校验失败，拒绝删除：$SCRATCH"
+    fi
   else
     warn "KEEP_HOME 已设置，保留 $SCRATCH"
   fi
   exit "$code"
 }
 trap cleanup EXIT
+
+# tarball 解析；未提供 tarball 时自行 build + pack 到受保护的 scratch，
+# 这样本地和 CI 都不依赖仓库里残留的旧产物。
+if [ -z "$TARBALL" ]; then
+  for candidate in "$ROOT"/dsh-better-sidebar-*.tgz; do
+    if [ -f "$candidate" ]; then
+      TARBALL="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$TARBALL" ]; then
+  say "未找到 tarball，执行 pnpm build && pnpm pack ..."
+  pnpm build
+  pnpm pack --pack-destination "$SCRATCH" >/dev/null
+  for candidate in "$SCRATCH"/dsh-better-sidebar-*.tgz; do
+    if [ -f "$candidate" ]; then
+      TARBALL="$candidate"
+      break
+    fi
+  done
+fi
+[ -n "$TARBALL" ] && [ -f "$TARBALL" ] || die "找不到 tarball（TARBALL 或自动 pnpm pack 产物）"
+TARBALL="$(cd "$(dirname "$TARBALL")" && pwd -P)/$(basename "$TARBALL")"
+say "tarball: $TARBALL"
 
 # 步骤 1：引导 scratch profile（web 模板，镜像 dsh initProfile；先写
 # pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免 pnpm 11
@@ -124,7 +154,7 @@ EOF
 
 # 步骤 2：官方 CLI 安装 tarball + bundle 协调（真实挂载路径）
 say "执行 dsh plugin --profile web add file:$TARBALL ..."
-$DSH_CMD plugin --profile web add "file:$TARBALL"
+run_dsh plugin --profile web add "file:$TARBALL"
 
 # 步骤 3：校验挂载生效（dsh.profile.bundles 含 dsh-better-sidebar）
 if ! node -e '
@@ -141,7 +171,7 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
-$DSH_CMD web --port "$PORT" > "$WEB_LOG" 2>&1 &
+run_dsh web --port "$PORT" > "$WEB_LOG" 2>&1 &
 SERVER_PID=$!
 
 URL=""
