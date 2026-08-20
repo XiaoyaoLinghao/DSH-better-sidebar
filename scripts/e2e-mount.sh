@@ -52,6 +52,17 @@ else
   DSH_MODE=pnpm
 fi
 
+# The default pinned rc.8 lane is keyless by construction and must prove that
+# its provider/onboarding takeover is dismissible after every navigation. An
+# explicit DSH_CMD is an opt-in compatibility/debug lane: it keeps the short,
+# optional onboarding path. Set this value from the resolved runner mode only;
+# never inherit a similarly named caller variable into the Playwright process.
+if [ "$DSH_MODE" = pnpm ]; then
+  E2E_ONBOARDING_EXPECTED=1
+else
+  E2E_ONBOARDING_EXPECTED=0
+fi
+
 # Keep the exact package pin and native build allow-list in shared variables;
 # both plugin mounting and web launch must use the same pnpm dlx contract.
 DSH_DLX_BIN='dlx'
@@ -232,6 +243,7 @@ say "dsh web 就绪：${URL}（pid ${SERVER_PID}）"
 
 # 步骤 5：运行无头渲染 lane
 say "运行 Playwright 无头渲染 lane..."
+DSH_E2E_EXPECT_ONBOARDING="$E2E_ONBOARDING_EXPECTED" \
 DSH_E2E_URL="$URL" DSH_E2E_WORKSPACE="$WORKSPACE_DIR" \
   pnpm exec playwright test ${GREP_FILTER:+--grep "$GREP_FILTER"}
 

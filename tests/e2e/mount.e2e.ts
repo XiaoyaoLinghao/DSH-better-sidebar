@@ -58,8 +58,13 @@ const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
 const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser', 'Sidechain']
 
+// The mount runner sets this explicitly from the resolved CLI mode. The
+// default pinned rc.8 path is keyless and must expose a provider/onboarding
+// takeover; an explicit DSH_CMD keeps the short optional compatibility path.
+const EXPECT_ONBOARDING_TAKEOVER = process.env.DSH_E2E_EXPECT_ONBOARDING === '1'
 const ONBOARDING_SHELL_WAIT_MS = 10_000
 const ONBOARDING_TAKEOVER_GRACE_MS = 2_000
+const ONBOARDING_EXPECTED_WAIT_MS = 60_000
 
 let api: APIRequestContext
 
@@ -125,25 +130,34 @@ async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
 async function dismissOnboarding(page: Page): Promise<void> {
   const takeover = page.getByRole('button', { name: /^(Continue|Configure later)$/ })
   const shellReady = page.locator('button:has([data-slot="settings.trigger"])')
-  const waitStarted = Date.now()
-  let shellReadySeen = false
-  while (Date.now() - waitStarted < ONBOARDING_SHELL_WAIT_MS) {
-    if ((await takeover.count()) > 0) break
-    shellReadySeen = (await shellReady.count()) > 0
-    if (shellReadySeen) {
-      const graceStarted = Date.now()
-      while (Date.now() - graceStarted < ONBOARDING_TAKEOVER_GRACE_MS && (await takeover.count()) === 0) {
-        await page.waitForTimeout(100)
+  if (EXPECT_ONBOARDING_TAKEOVER) {
+    // In the default rc.8 keyless lane, absence is a real failure rather than
+    // an optional condition. Poll the actual takeover seam so delayed provider
+    // initialization cannot leak a modal into the next shell interaction.
+    await expect
+      .poll(async () => takeover.count(), { timeout: ONBOARDING_EXPECTED_WAIT_MS })
+      .toBeGreaterThan(0)
+  } else {
+    const waitStarted = Date.now()
+    let shellReadySeen = false
+    while (Date.now() - waitStarted < ONBOARDING_SHELL_WAIT_MS) {
+      if ((await takeover.count()) > 0) break
+      shellReadySeen = (await shellReady.count()) > 0
+      if (shellReadySeen) {
+        const graceStarted = Date.now()
+        while (Date.now() - graceStarted < ONBOARDING_TAKEOVER_GRACE_MS && (await takeover.count()) === 0) {
+          await page.waitForTimeout(100)
+        }
+        break
       }
-      break
+      await page.waitForTimeout(100)
     }
-    await page.waitForTimeout(100)
-  }
-  if (!shellReadySeen && (await takeover.count()) === 0) {
-    throw new Error(`DSH shell did not expose Settings or onboarding within ${ONBOARDING_SHELL_WAIT_MS}ms`)
-  }
-  if ((await takeover.count()) === 0) {
-    console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
+    if (!shellReadySeen && (await takeover.count()) === 0) {
+      throw new Error(`DSH shell did not expose Settings or onboarding within ${ONBOARDING_SHELL_WAIT_MS}ms`)
+    }
+    if ((await takeover.count()) === 0) {
+      console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
+    }
   }
   let lastClickError: unknown
   for (let round = 0; round < 8; round++) {

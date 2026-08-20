@@ -12,6 +12,12 @@
  */
 import { defineConfig } from '@playwright/test'
 
+// The default rc.8 keyless mount contract performs a bounded onboarding wait
+// after the initial load and each of three reloads. Keep the larger total
+// budget limited to that runner-selected mode; explicit DSH_CMD runs retain
+// the normal timeout and optional short onboarding path.
+const expectOnboarding = process.env.DSH_E2E_EXPECT_ONBOARDING === '1'
+
 export default defineConfig({
   testDir: './tests/e2e',
   // The lane's specs are named *.e2e.ts (so vitest's default include never
@@ -23,7 +29,7 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   fullyParallel: false,
-  timeout: 120_000,
+  timeout: expectOnboarding ? 360_000 : 120_000,
   reporter: [
     ['list'],
     // Local debugging artifact; CI uploads the report dir on failure.

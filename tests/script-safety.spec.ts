@@ -222,12 +222,23 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('koffi: true')
     expect(script).toContain('DSH_CMD="${DSH_CMD-}"')
     expect(script).toContain('DSH_CMD 无效')
+    expect(script).toContain('E2E_ONBOARDING_EXPECTED=1')
+    expect(script).toContain('E2E_ONBOARDING_EXPECTED=0')
+    expect(script).toContain('DSH_E2E_EXPECT_ONBOARDING="$E2E_ONBOARDING_EXPECTED"')
     expect(script).toContain('typeof value.quarantine !== "string"')
     expect(script).not.toContain('DSH_CMD="${DSH_CMD:-dsh}"')
     expect(script).not.toContain('npx -y --package')
     expect(script).toContain('@deepseek-ai/dsh@0.1.0-rc.8')
     expect(script).not.toContain('for candidate in "$ROOT"/dsh-better-sidebar-*.tgz')
     expect(readFileSync(resolve(process.cwd(), 'scripts/safe-temp.mjs'), 'utf8')).toContain('SIGKILL')
+  })
+
+  it('binds onboarding expectations to the runner-selected rc.8 mode', () => {
+    const script = readFileSync(resolve(process.cwd(), 'scripts/e2e-mount.sh'), 'utf8')
+    expect(script).toMatch(/if \[ "\$DSH_MODE" = pnpm \]; then[\s\S]*E2E_ONBOARDING_EXPECTED=1[\s\S]*else[\s\S]*E2E_ONBOARDING_EXPECTED=0/)
+    expect(script).toContain('DSH_E2E_EXPECT_ONBOARDING="$E2E_ONBOARDING_EXPECTED"')
+    expect(script).not.toContain('DSH_E2E_EXPECT_ONBOARDING="${DSH_E2E_EXPECT_ONBOARDING')
+    expect(script).not.toContain('DSH_E2E_EXPECT_ONBOARDING=${DSH_E2E_EXPECT_ONBOARDING')
   })
 
   it('executes the pinned rc.8 bin directly and passes scoped build approvals', () => {
