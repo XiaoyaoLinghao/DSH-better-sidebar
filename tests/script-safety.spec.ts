@@ -209,6 +209,10 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('node "$SAFE_TEMP" launch')
     expect(script).toContain('DSH_MODE=pnpm')
     expect(script).toContain('pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh')
+    expect(script).toContain('DSH_CMD="${DSH_CMD-}"')
+    expect(script).toContain('DSH_CMD 无效')
+    expect(script).toContain('typeof value.quarantine !== "string"')
+    expect(script).not.toContain('DSH_CMD="${DSH_CMD:-dsh}"')
     expect(script).not.toContain('npx -y --package')
     expect(script).toContain('@deepseek-ai/dsh@0.1.0-rc.8')
     expect(script).not.toContain('for candidate in "$ROOT"/dsh-better-sidebar-*.tgz')
@@ -244,5 +248,25 @@ describe('verification script scratch safety', () => {
     expect(source).not.toContain('rm -rf')
     expect(source).toContain('stat.dev.toString()')
     expect(source).toContain('stat.ino.toString()')
+  })
+
+  it('launches a Windows .cmd shim with metacharacter arguments unchanged', async () => {
+    if (process.platform !== 'win32') return
+    const { sandbox } = createSandbox()
+    const shim = join(sandbox, 'explicit-override.cmd')
+    const capture = join(sandbox, 'capture.mjs')
+    const output = join(sandbox, 'argv.json')
+    const pidFile = join(sandbox, 'shim.pid')
+    const logFile = join(sandbox, 'shim.log')
+    writeFileSync(capture, 'import fs from "node:fs"; fs.writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(3)))\n')
+    writeFileSync(shim, '@echo off\r\nnode "%~dp0capture.mjs" "%~1" "%~2" "%~3" "%~4"\r\n')
+    try {
+      const launcher = invokeAsync(['launch', pidFile, logFile, shim, output, 'alpha&beta', 'quoted"arg', 'semi;pipe|'])
+      await new Promise<void>((resolve) => launcher.once('exit', () => resolve()))
+      expect(launcher.exitCode).toBe(0)
+      expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(['alpha&beta', 'quoted"arg', 'semi;pipe|'])
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
   })
 })

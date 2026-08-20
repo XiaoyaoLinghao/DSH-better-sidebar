@@ -33,7 +33,7 @@ cleanup() {
   local code=$?
   local quarantine_result
   if quarantine_result="$(node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' "$WORK_TOKEN" 2>&1)"; then
-    if quarantine_path="$(node -p "JSON.parse(process.argv[1]).quarantine" "$quarantine_result" 2>/dev/null)"; then
+    if quarantine_path="$(node -e 'const value=JSON.parse(process.argv[1]); if (typeof value.quarantine !== "string" || value.quarantine.length === 0) process.exit(1); process.stdout.write(value.quarantine)' "$quarantine_result" 2>/dev/null)"; then
       echo "[check-consumer-types] scratch quarantined (not deleted); reclaim manually: $quarantine_path" >&2
     else
       echo "[check-consumer-types] WARNING: cleanup returned an unparseable result; preserving: $quarantine_result" >&2

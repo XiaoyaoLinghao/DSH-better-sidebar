@@ -13,7 +13,7 @@
 #   bash scripts/e2e-mount.sh [--grep <playwright-filter>]
 #
 # 环境变量（均可省略）：
-#   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 pnpm dlx 拉 rc8
+#   DSH_CMD        可选的 dsh 命令覆盖；为空时固定使用 pnpm dlx 拉 rc8
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
@@ -30,7 +30,7 @@ ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 cd "$ROOT"
 SAFE_TEMP="$SCRIPT_DIR/safe-temp.mjs"
 
-DSH_CMD="${DSH_CMD:-dsh}"
+DSH_CMD="${DSH_CMD-}"
 PORT="${PORT:-0}"
 TARBALL="${TARBALL:-}"
 GREP_FILTER=""
@@ -43,12 +43,12 @@ die()  { printf '\033[31m[e2e-mount]\033[0m %s\n' "$*" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || die "未找到 node（DSH 运行需要 Node.js >= 20）"
 command -v pnpm >/dev/null 2>&1 || die "未找到 pnpm（dsh plugin 转发给 pnpm）"
 
-# dsh CLI 解析：PATH 上的 dsh 优先，否则使用已验证可用的 pnpm dlx。
-if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
-  say "PATH 上无 $DSH_CMD，回退 pnpm dlx @deepseek-ai/dsh@0.1.0-rc.8"
-  DSH_MODE=pnpm
-else
+# dsh CLI 解析：默认永远固定到 rc8；显式覆盖必须可解析，不能静默回退。
+if [ -n "$DSH_CMD" ]; then
+  command -v "$DSH_CMD" >/dev/null 2>&1 || die "DSH_CMD 无效：$DSH_CMD（不会回退到其他命令）"
   DSH_MODE=path
+else
+  DSH_MODE=pnpm
 fi
 
 run_dsh() {
@@ -85,7 +85,7 @@ cleanup() {
   fi
   if [ -z "${KEEP_HOME:-}" ]; then
     if QUARANTINE_RESULT="$(node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN" 2>&1)"; then
-      if QUARANTINE_PATH="$(node -p "JSON.parse(process.argv[1]).quarantine" "$QUARANTINE_RESULT" 2>/dev/null)"; then
+      if QUARANTINE_PATH="$(node -e 'const value=JSON.parse(process.argv[1]); if (typeof value.quarantine !== "string" || value.quarantine.length === 0) process.exit(1); process.stdout.write(value.quarantine)' "$QUARANTINE_RESULT" 2>/dev/null)"; then
         say "scratch 已隔离，未删除；请手动回收：$QUARANTINE_PATH"
       else
         warn "scratch cleanup 返回了无法解析的结果，已保留：$QUARANTINE_RESULT"
