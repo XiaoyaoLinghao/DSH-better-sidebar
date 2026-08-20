@@ -47,6 +47,7 @@ import {
 import { registerTools } from './tools.ts'
 import { buildJobsApi, type SidebarJobsRoutes } from './jobs-routes.ts'
 import { readJsonBody, requireString, SidebarError, writeError, writeJson, writeOk } from './wire.ts'
+import { registerSidechainHost } from './sidechain-host/index.ts'
 
 export { Config }
 export type { SidebarConfig, ResolvedSidebarConfig }
@@ -484,6 +485,7 @@ export function apply(ctx: Context, config?: SidebarConfig): void {
   // restore it before any terminal can spawn (idempotent).
   ensureSpawnHelper()
   const resolved = resolveSidebarConfig(config)
+  registerSidechainHost(ctx, resolved.sidechain)
   // One shell resolution feeds BOTH terminal surfaces: the UI tabs and the
   // model-facing terminal_* tools. They must stay in lockstep, otherwise a
   // configured shell fixes one surface and silently leaves the other on the
