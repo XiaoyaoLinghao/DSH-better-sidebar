@@ -57,6 +57,17 @@ describe('public API surface (v0.12.0)', () => {
     expect(offenders).toEqual([])
   })
 
+  it('keeps the rc.8 Sidechain context structural and browser-safe', () => {
+    const contextSource = readFileSync(join(ROOT, 'src', 'context-types.ts'), 'utf8')
+    // The context augmentation is reachable from client/service.d.ts. It may
+    // mirror host services, but it must never pull a runtime harness module or
+    // a Node-only declaration into a browser consumer.
+    expect(contextSource).not.toMatch(/@deepseek-ai\/agent-harness/)
+    expect(contextSource).not.toMatch(/from\s+['"]node:/)
+    expect(contextSource).toMatch(/prompt\([\s\S]*signal:\s*AbortSignal/)
+    expect(contextSource).toMatch(/attachments:\s*readonly\s+SidebarCommandImageBlock\[\]/)
+  })
+
   it('advertises the capability list and version (values come from service.ts)', () => {
     // Full releases are bare x.y.z; pre-releases (beta) carry -<tag>.<n>.
     expect(SIDEBAR_SERVICE_VERSION).toMatch(/^\d+\.\d+\.\d+(-[a-z0-9.]+)?$/)

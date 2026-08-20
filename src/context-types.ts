@@ -171,11 +171,14 @@ export interface SidebarSubagentCatalog {
 }
 
 /** Durable parent/child address that selects subagent transport in the client. */
-export interface SidebarSubagentAddress {
+export type SidebarSubagentAddress = {
   parentSessionId: string
   childSessionId: string
-  mode: 'one-shot' | 'continuable'
-}
+} & ({
+  mode: 'one-shot'
+} | {
+  mode: 'continuable'
+})
 
 /** Minimal structural mirror of one session event (the subagent history tail). */
 export interface SidebarSessionEvent {
@@ -186,9 +189,13 @@ export interface SidebarSessionEvent {
 }
 
 /** One history row: the durable event plus an optional tool presentation view. */
+export type SidebarHistoryView =
+  | { for: 'call'; view: unknown }
+  | { for: 'result'; view: unknown }
+
 export interface SidebarHistoryEntry {
   event: SidebarSessionEvent
-  view?: unknown
+  view?: SidebarHistoryView
 }
 
 /** Lifecycle status set of one background job (closed wire union). */
@@ -227,6 +234,44 @@ export interface SidebarAgentsService {
   get(id: string): SidebarAgent | undefined
 }
 
+/** Browser-safe image block admitted to a command invocation. The host-owned
+ * attachment store has already made these blocks durable by this boundary. */
+export interface SidebarCommandImageBlock {
+  readonly type: 'image'
+  readonly mediaType: string
+  readonly data: string
+  readonly name?: string
+}
+
+/** The narrow command invocation face a command handler consumes. */
+export interface SidebarCommandInvocation {
+  readonly commandId: string
+  readonly agent: SidebarAgent
+  readonly rawInput: string
+  readonly attachments: readonly SidebarCommandImageBlock[]
+  readonly signal: AbortSignal
+}
+
+/** Minimal command outcome mirror (the command registry normalizes this). */
+export type SidebarCommandResult =
+  | { readonly kind: 'success'; readonly text?: string; readonly sourceEventSeq?: number }
+  | { readonly kind: 'error'; readonly text: string }
+
+/** Browser-safe command definition accepted by the rc.8 command registry. */
+export interface SidebarCommandDefinition {
+  readonly name: string
+  readonly description: string
+  readonly input?: { readonly hint: string; readonly images?: boolean }
+  readonly recordInput?: boolean
+  readonly handler: (invocation: SidebarCommandInvocation) => SidebarCommandResult | Promise<SidebarCommandResult>
+}
+
+/** Host command service face. Kept structural so client-reachable declarations
+ * never import the Node-backed command runtime. */
+export interface SidebarCommandsService {
+  register(definition: SidebarCommandDefinition): () => void
+}
+
 /** RPC result slot mirror (`RpcResult<T>` on the wire). */
 export type SidebarRpcResult<T> = { ok: true; value: T } | { ok: false; error: { code: string; message: string } }
 
@@ -243,10 +288,26 @@ export interface SidebarConnectionHandle {
       history(
         payload: SidebarSubagentAddress & { beforeSeq?: number; maxMessages?: number },
         signal?: AbortSignal,
-      ): Promise<SidebarRpcResponse<{ events: SidebarHistoryEntry[]; hasMore: boolean }>>
+      ): Promise<SidebarRpcResponse<{
+        events: SidebarHistoryEntry[]
+        hasMore: boolean
+        projections?: { asOfSeq: number; values: Record<string, unknown> }
+      }>>
+      prompt(
+        payload: Extract<SidebarSubagentAddress, { mode: 'continuable' }> & {
+          content: SidebarPromptContentPart[]
+          clientTimeZone?: string
+        },
+        signal: AbortSignal,
+      ): Promise<SidebarRpcResponse<{ messageId: string }>>
     }
   }
 }
+
+/** Browser-submitted prompt content accepted by the rc.8 subagent RPC. */
+export type SidebarPromptContentPart =
+  | { readonly type: 'text'; readonly text: string }
+  | { readonly type: 'image'; readonly mediaType: string; readonly data: string; readonly name?: string }
 
 /** The client session list snapshot the sidebar subscribes to. */
 export interface SidebarSessionList {
@@ -273,6 +334,12 @@ export interface SidebarSessionsService {
    * — used to jump back to the main agent from the topology root node.
    */
   open?(id: string): void
+  /** Fork a completed-turn prefix into a new listed session. */
+  fork(options: {
+    sessionId: string
+    atSeq?: number
+    increaseTitle?: boolean
+  }): Promise<string>
   /**
    * Resolve an Agent-scoped context view for one session (mirror of the
    * runtime ISessions.scope) — the ticket `ctx.conversation.input.for`
@@ -422,6 +489,8 @@ declare module 'cordis' {
     settings: SidebarSettingsService
     invariants: SidebarInvariantsService
     tools: SidebarToolsService
+    /** Optional rc.8 host command registry; absent on deployments without it. */
+    commands: SidebarCommandsService
     /**
      * The client locale service (`@deepseek-ai/dsh-client-locale`): the
      * sidebar's copy follows its active locale and registers its

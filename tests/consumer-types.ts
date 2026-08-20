@@ -38,6 +38,13 @@ import type {
   SidebarTab,
   TabType,
 } from '../src/client/service.ts'
+import type {
+  Context,
+  SidebarCommandDefinition,
+  SidebarConnectionHandle,
+  SidebarHistoryEntry,
+  SidebarSubagentAddress,
+} from '../src/context-types.ts'
 
 /** A full-featured external tab descriptor using every v0.12.0 field. */
 const tab: TabDescriptor = {
@@ -138,3 +145,67 @@ const features: readonly string[] = SIDEBAR_FEATURES
 void version; void features
 const strategy: FileFetchStrategy = 'mediaUrl'
 void diff; void prefs; void store; void declaration; void typeName; void strategy
+
+/** The rc.8 browser subagent API keeps the RPC envelope and nested history
+ * value visible to a Sidechain history reader. */
+declare const browserCtx: Context
+const sideAddress: SidebarSubagentAddress = {
+  parentSessionId: 'parent', childSessionId: 'child', mode: 'continuable',
+}
+const historyResponse = browserCtx.connection.api.subagents.history(sideAddress)
+historyResponse.then(response => {
+  if (!response.result.ok) return
+  const entry: SidebarHistoryEntry | undefined = response.result.value.events[0]
+  if (entry !== undefined) {
+    void entry.event.seq
+    void entry.view?.for
+  }
+  void response.result.value.hasMore
+})
+
+/** rc.8 requires a local cancellation signal for continuable prompts. */
+const promptResponse = browserCtx.connection.api.subagents.prompt({
+  ...sideAddress,
+  content: [{ type: 'text', text: 'Follow up' }],
+}, new AbortController().signal)
+void promptResponse
+
+/** Command handlers receive admitted image attachments in submission order. */
+const sideCommand: SidebarCommandDefinition = {
+  name: 'side',
+  description: 'Side conversation',
+  input: { hint: '<question>', images: true },
+  handler: ({ attachments, signal }) => {
+    const first = attachments[0]
+    if (first !== undefined) void first.data
+    void signal
+    return { kind: 'success', text: 'ok' }
+  },
+}
+browserCtx.commands.register(sideCommand)
+
+/** The session fork face and callbacks used by browser feature coordinators. */
+const forked: Promise<string> = browserCtx.sessions.fork({
+  sessionId: 'parent',
+  atSeq: 12,
+  increaseTitle: true,
+})
+void forked
+
+/** Tab metadata, lifecycle callbacks, and visible-gated component context are
+ * all consumable together by an external Sidechain tab. */
+const sideTab: TabDescriptor = {
+  id: 'sidechain',
+  title: 'Sidechain',
+  single: true,
+  onOpen: (opened, scope) => { void opened.meta; void scope },
+  onActivate: (active, scope) => { void active.meta; void scope },
+  onClose: (closed, scope) => { void closed.meta; void scope },
+  component: ({ visible, tab: activeTab }) => {
+    if (!visible) return null
+    void activeTab.meta
+    return null
+  },
+}
+void sideTab
+void ({} as SidebarConnectionHandle)
