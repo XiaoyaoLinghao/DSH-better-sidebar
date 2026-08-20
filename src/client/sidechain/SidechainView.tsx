@@ -42,6 +42,19 @@ export interface SidechainViewProps {
 
 type CatalogEntry = SidebarSubagentChildEntry | SidebarSubagentDiagnosticEntry
 
+interface ActivityState {
+  ownerParentSessionId: string | undefined
+  lines: Record<string, string>
+}
+
+export function selectActivityLine(
+  activity: { readonly ownerParentSessionId: string | undefined; readonly lines: Readonly<Record<string, string>> },
+  parentSessionId: string,
+  childId: string,
+): string | undefined {
+  return activity.ownerParentSessionId === parentSessionId ? activity.lines[childId] : undefined
+}
+
 /** Native Sidechain page list shell. */
 export function SidechainView(props: SidechainViewProps) {
   const { ctx, scope, tab, visible, controller, history } = props
@@ -76,13 +89,17 @@ export function SidechainView(props: SidechainViewProps) {
     controller.clearStaleSelection(parentSessionId, liveChildIds)
   }, [catalog?.state, controller, liveChildIds, parentSessionId, selectedChildId])
 
-  const [activity, setActivity] = useState<Record<string, string>>({})
+  const [activity, setActivity] = useState<ActivityState>({ ownerParentSessionId: undefined, lines: {} })
+  const currentParentSessionId = useRef(parentSessionId)
+  currentParentSessionId.current = parentSessionId
   const requestEpoch = useRef(0)
 
   // Activity is addressed by parent + child. Never carry a parent's line into
   // another parent's catalog, even when both catalogs contain the same child ID.
   useEffect(() => {
-    setActivity(previous => Object.keys(previous).length === 0 ? previous : {})
+    setActivity(previous => previous.ownerParentSessionId === parentSessionId && Object.keys(previous.lines).length === 0
+      ? previous
+      : { ownerParentSessionId: parentSessionId, lines: {} })
   }, [parentSessionId])
 
   // Activity is a small live hint, not a catalog source. Poll only running
@@ -92,7 +109,9 @@ export function SidechainView(props: SidechainViewProps) {
     requestEpoch.current++
     const epoch = requestEpoch.current
     if (!visible || catalog?.state !== 'ready') {
-      setActivity(previous => Object.keys(previous).length === 0 ? previous : {})
+      setActivity(previous => previous.ownerParentSessionId === parentSessionId && Object.keys(previous.lines).length === 0
+        ? previous
+        : { ownerParentSessionId: parentSessionId, lines: {} })
       return
     }
     const running = entries.filter(
@@ -100,11 +119,15 @@ export function SidechainView(props: SidechainViewProps) {
     )
     const runningIds = new Set(running.map(entry => entry.id))
     setActivity(previous => {
+      const previousLines = previous.ownerParentSessionId === parentSessionId ? previous.lines : {}
       const next: Record<string, string> = {}
-      for (const [id, line] of Object.entries(previous)) {
+      for (const [id, line] of Object.entries(previousLines)) {
         if (runningIds.has(id)) next[id] = line
       }
-      return Object.keys(next).length === Object.keys(previous).length ? previous : next
+      return previous.ownerParentSessionId === parentSessionId
+        && Object.keys(next).length === Object.keys(previousLines).length
+        ? previous
+        : { ownerParentSessionId: parentSessionId, lines: next }
     })
     if (running.length === 0) {
       return
@@ -122,8 +145,17 @@ export function SidechainView(props: SidechainViewProps) {
           }
           try {
             const line = await history.fetchActivity(address, abort.signal)
-            if (!disposed && requestEpoch.current === epoch && line !== null && line.trim() !== '') {
-              setActivity(previous => ({ ...previous, [entry.id]: line }))
+            if (!disposed
+              && requestEpoch.current === epoch
+              && currentParentSessionId.current === parentSessionId
+              && line !== null
+              && line.trim() !== '') {
+              setActivity(previous => previous.ownerParentSessionId === parentSessionId
+                ? {
+                    ownerParentSessionId: parentSessionId,
+                    lines: { ...previous.lines, [entry.id]: line },
+                  }
+                : previous)
             }
           } catch {
             // One child's activity failure must not affect sibling rows.
@@ -203,7 +235,13 @@ export function SidechainView(props: SidechainViewProps) {
           <div className={css.sidechainEmpty} data-sidechain-empty>{labels.sidechainEmpty}</div>
         ) : (
           entries.map(entry => entry.kind === 'child'
-            ? <ChildRow key={entry.id} entry={entry} list={list} activity={activity[entry.id]} onSelect={select} />
+            ? <ChildRow
+                key={entry.id}
+                entry={entry}
+                list={list}
+                activity={selectActivityLine(activity, parentSessionId, entry.id)}
+                onSelect={select}
+              />
             : <DiagnosticRow key={entry.id} entry={entry} labels={labels} />)
         )}
       </div>

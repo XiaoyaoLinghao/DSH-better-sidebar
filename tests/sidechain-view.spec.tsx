@@ -11,7 +11,7 @@ import type {
 import type { BetterSidebarService, SessionScope, SidebarTab } from '../src/client/service.ts'
 import type { SidechainController } from '../src/client/sidechain/controller.ts'
 import type { SidechainHistory } from '../src/client/sidechain/history.ts'
-import { SidechainView } from '../src/client/sidechain/SidechainView.tsx'
+import { selectActivityLine, SidechainView } from '../src/client/sidechain/SidechainView.tsx'
 import { getSidechainLabels } from '../src/client/locales.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -72,6 +72,19 @@ const child = (id: string, mode: 'one-shot' | 'continuable' = 'continuable', act
 describe('SidechainView list shell', () => {
   beforeEach(() => { document.body.innerHTML = '' })
   afterEach(() => { vi.useRealTimers() })
+
+  it('does not select an old parent activity line during the render transition', () => {
+    expect(selectActivityLine(
+      { ownerParentSessionId: 'parent-a', lines: { same: 'old parent line' } },
+      'parent-b',
+      'same',
+    )).toBeUndefined()
+    expect(selectActivityLine(
+      { ownerParentSessionId: 'parent-a', lines: { same: 'old parent line' } },
+      'parent-a',
+      'same',
+    )).toBe('old parent line')
+  })
 
   it('renders loading, empty, error, and direct children from the current parent catalog', () => {
     const sessionFeed = feed({ current: 'parent', byId: { parent: { id: 'parent', displayTitle: 'Parent' } }, subagentsByParent: {} })
