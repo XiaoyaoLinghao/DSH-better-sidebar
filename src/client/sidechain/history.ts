@@ -91,23 +91,26 @@ export function createSidechainHistory(api: SidechainApi): SidechainHistory {
     maxMessages: number,
     beforeSeq: number | undefined,
     signal: AbortSignal | undefined,
-  ): Promise<HistoryPage | null> => {
+  ): Promise<HistoryPage> => {
     const payload = {
       ...address,
       maxMessages,
       ...(beforeSeq === undefined ? {} : { beforeSeq }),
     }
-    try {
-      const response = signal === undefined
-        ? await api.history(payload)
-        : await api.history(payload, signal)
-      if (!response.result.ok) return null
-      return {
-        events: response.result.value.events as HistoryEntry[],
-        hasMore: response.result.value.hasMore,
-      }
-    } catch {
-      return null
+    const response = signal === undefined
+      ? await api.history(payload)
+      : await api.history(payload, signal)
+    if (!response.result.ok) {
+      const error = response.result.error
+      throw new Error(
+        typeof error.message === 'string' && error.message !== ''
+          ? error.message
+          : typeof error.code === 'string' && error.code !== '' ? error.code : 'history request failed',
+      )
+    }
+    return {
+      events: response.result.value.events as HistoryEntry[],
+      hasMore: response.result.value.hasMore,
     }
   }
 
@@ -116,7 +119,7 @@ export function createSidechainHistory(api: SidechainApi): SidechainHistory {
     pageMessages: number,
     pageCap: number | undefined,
     signal: AbortSignal | undefined,
-  ): Promise<{ entries: readonly HistoryEntry[]; hasMore: boolean } | null> => {
+  ): Promise<{ entries: readonly HistoryEntry[]; hasMore: boolean }> => {
     const childSessionId = address.childSessionId
     const cachedBoundary = seedBoundaryCache.get(childSessionId)
     const collected: HistoryEntry[] = []
@@ -127,7 +130,6 @@ export function createSidechainHistory(api: SidechainApi): SidechainHistory {
 
     for (let page = 0; page < maxPages; page++) {
       const result = await fetchPage(address, pageMessages, beforeSeq, signal)
-      if (result === null) return null
       hasMore = hasMore || result.hasMore
       const events = result.events
       if (events.length === 0) break
@@ -158,27 +160,12 @@ export function createSidechainHistory(api: SidechainApi): SidechainHistory {
     return { entries: collected, hasMore }
   }
 
-  const emptySnapshot = (): SidechainTranscriptSnapshot => ({
-    rows: [], produced: [], streaming: false, hasMore: false,
-  })
-
   const fetchTranscript = async (
     address: SidebarSubagentAddress,
     signal?: AbortSignal,
   ): Promise<SidechainTranscriptSnapshot> => {
     const operationGeneration = generation
     const result = await fetchSeedCutEntries(address, TRANSCRIPT_PAGE_MESSAGES, undefined, signal)
-    if (result === null) {
-      const previous = transcriptEntryCache.get(address.childSessionId)
-      if (previous === undefined) return emptySnapshot()
-      const rows = transcriptRows(previous)
-      return {
-        rows,
-        produced: producedPaths(previous),
-        streaming: isStreaming(previous),
-        hasMore: false,
-      }
-    }
 
     const previous = transcriptEntryCache.get(address.childSessionId) ?? []
     const bySeq = new Map(previous.map(entry => [entry.event.seq, entry]))
@@ -199,9 +186,12 @@ export function createSidechainHistory(api: SidechainApi): SidechainHistory {
     address: SidebarSubagentAddress,
     signal?: AbortSignal,
   ): Promise<string | null> => {
-    const result = await fetchSeedCutEntries(address, ACTIVITY_PAGE_MESSAGES, ACTIVITY_PAGE_CAP, signal)
-    if (result === null) return null
-    return lastActivity(transcriptRows(result.entries)) ?? null
+    try {
+      const result = await fetchSeedCutEntries(address, ACTIVITY_PAGE_MESSAGES, ACTIVITY_PAGE_CAP, signal)
+      return lastActivity(transcriptRows(result.entries)) ?? null
+    } catch {
+      return null
+    }
   }
 
   const sendPrompt = async (

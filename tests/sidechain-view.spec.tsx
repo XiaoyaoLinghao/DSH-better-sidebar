@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createElement, Profiler, type ReactNode } from 'react'
+import { createElement, Profiler, StrictMode, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { createRoot, type Root } from 'react-dom/client'
 import type {
@@ -11,6 +11,7 @@ import type {
 import type { BetterSidebarService, SessionScope, SidebarTab } from '../src/client/service.ts'
 import type { SidechainController } from '../src/client/sidechain/controller.ts'
 import type { SidechainHistory } from '../src/client/sidechain/history.ts'
+import { createSidechainHistory } from '../src/client/sidechain/history.ts'
 import type { TranscriptRow } from '../src/client/sidechain/transcript.ts'
 import { SidechainView } from '../src/client/sidechain/SidechainView.tsx'
 import { getSidechainLabels } from '../src/client/locales.ts'
@@ -341,6 +342,121 @@ describe('SidechainView list shell', () => {
     })))
     await act(async () => { await Promise.resolve() })
     expect(fetchTranscript).not.toHaveBeenCalled()
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('reads once for every StrictMode visible selected setup', async () => {
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('strict')] }) } })
+    const fetchTranscript = vi.fn(async () => transcriptSnapshot())
+    const initial = props(sessionFeed, { meta: { version: 1, selectedChildId: 'strict' }, history: { fetchTranscript } })
+    const mounted = mount(createElement(StrictMode, null, createElement(SidechainView, initial)))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('reads again when a selected child becomes visible', async () => {
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('revealed')] }) } })
+    const fetchTranscript = vi.fn(async () => transcriptSnapshot())
+    const initial = props(sessionFeed, {
+      visible: false, meta: { version: 1, selectedChildId: 'revealed' }, history: { fetchTranscript },
+    })
+    const mounted = mount(createElement(SidechainView, initial))
+    expect(fetchTranscript).not.toHaveBeenCalled()
+    mounted.rerender(createElement(SidechainView, { ...initial, visible: true }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(1)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('performs a final transcript read when a running child becomes inactive', async () => {
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('settling', 'continuable', 'running')] }) } })
+    const fetchTranscript = vi.fn(async () => transcriptSnapshot())
+    const initial = props(sessionFeed, { meta: { version: 1, selectedChildId: 'settling' }, history: { fetchTranscript } })
+    const mounted = mount(createElement(SidechainView, initial))
+    await act(async () => { await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(1)
+    act(() => {
+      sessionFeed.set({ ...sessionFeed.list.getSnapshot(), subagentsByParent: { parent: catalog({ entries: [child('settling')] }) } })
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('aborts the selected transcript request when unmounted', async () => {
+    const pending = new Promise<Awaited<ReturnType<SidechainHistory['fetchTranscript']>>>(() => {})
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('unmount')] }) } })
+    const fetchTranscript = vi.fn((_address: SidebarSubagentAddress, signal?: AbortSignal) => {
+      expect(signal).toBeInstanceOf(AbortSignal)
+      return pending
+    })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'unmount' }, history: { fetchTranscript },
+    })))
+    await act(async () => { await Promise.resolve() })
+    const signal = fetchTranscript.mock.calls[0]?.[1] as AbortSignal
+    unmount(mounted.root, mounted.container)
+    expect(signal.aborted).toBe(true)
+  })
+
+  it('does not overlap slow running transcript reads', async () => {
+    vi.useFakeTimers()
+    let resolveFirst!: (snapshot: Awaited<ReturnType<SidechainHistory['fetchTranscript']>>) => void
+    const first = new Promise<Awaited<ReturnType<SidechainHistory['fetchTranscript']>>>(resolve => { resolveFirst = resolve })
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('slow', 'continuable', 'running')] }) } })
+    const fetchTranscript = vi.fn(() => first)
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'slow' }, history: { fetchTranscript },
+    })))
+    expect(fetchTranscript).toHaveBeenCalledTimes(1)
+    await act(async () => { vi.advanceTimersByTime(9000); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(1)
+    await act(async () => { resolveFirst(transcriptSnapshot()); await first })
+    await act(async () => { vi.advanceTimersByTime(3000); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('retries with one fresh timer after a running transcript error', async () => {
+    vi.useFakeTimers()
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('retry-running', 'continuable', 'running')] }) } })
+    const fetchTranscript = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(transcriptSnapshot([{ kind: 'assistant', seq: 1, text: 'ok' }]))
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'retry-running' }, history: { fetchTranscript },
+    })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(mounted.container.querySelector('[data-sidechain-transcript-error]')).not.toBeNull()
+    act(() => { mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-transcript-retry]')!.click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    await act(async () => { vi.advanceTimersByTime(2999); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(3)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('surfaces a real history RPC failure and succeeds after retry', async () => {
+    const rpc = vi.fn()
+      .mockResolvedValueOnce({ result: { ok: false, error: { code: 'offline', message: 'offline' } } })
+      .mockResolvedValueOnce({ result: { ok: true, value: { events: [
+        { event: { type: 'session/end-seed', seq: 1, time: 0, data: {} } },
+        { event: { type: 'user/message', seq: 2, time: 0, data: { content: [{ type: 'text', text: 'recovered' }] } } },
+      ], hasMore: false } } })
+    const history = createSidechainHistory({ history: rpc, prompt: vi.fn() } as never)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('real-failure')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'real-failure' }, history,
+    })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(mounted.container.querySelector('[data-sidechain-transcript-error]')).not.toBeNull()
+    act(() => { mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-transcript-retry]')!.click() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(mounted.container.textContent).toContain('recovered')
+    expect(rpc).toHaveBeenCalledTimes(2)
     unmount(mounted.root, mounted.container)
   })
 

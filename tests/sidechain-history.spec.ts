@@ -79,14 +79,24 @@ describe('createSidechainHistory', () => {
     expect(snapshot.streaming).toBe(true)
   })
 
-  it('contains business and transport failures without throwing', async () => {
+  it('throws transcript failures while containing activity failures', async () => {
     const history = vi.fn()
       .mockResolvedValueOnce({ result: { ok: false, error: { code: 'offline', message: 'offline' } } })
       .mockRejectedValueOnce(new Error('network'))
     const reader = createSidechainHistory({ history, prompt: vi.fn() } as never)
 
-    expect((await reader.fetchTranscript(ADDRESS)).rows).toEqual([])
+    await expect(reader.fetchTranscript(ADDRESS)).rejects.toThrow('offline')
     expect(await reader.fetchActivity(ADDRESS)).toBeNull()
+  })
+
+  it('does not mask a refresh failure with a previously successful transcript cache', async () => {
+    const history = vi.fn()
+      .mockResolvedValueOnce(page([{ event: event('session/end-seed', 1, {}) }, user(2, 'cached')]))
+      .mockRejectedValueOnce(new Error('refresh failed'))
+    const reader = createSidechainHistory({ history, prompt: vi.fn() } as never)
+
+    await expect(reader.fetchTranscript(ADDRESS)).resolves.toMatchObject({ rows: [{ text: 'cached' }] })
+    await expect(reader.fetchTranscript(ADDRESS)).rejects.toThrow('refresh failed')
   })
 
   it('caps activity pagination while still deriving the latest activity', async () => {
@@ -119,6 +129,7 @@ describe('createSidechainHistory', () => {
     const history = vi.fn()
       .mockResolvedValueOnce(page([{ event: event('session/end-seed', 1, {}) }, user(2, 'first')]))
       .mockResolvedValueOnce(page([user(3, 'second')]))
+      .mockResolvedValueOnce(page([]))
     const api = { history, prompt: vi.fn() }
     const reader = createSidechainHistory(api as never)
 

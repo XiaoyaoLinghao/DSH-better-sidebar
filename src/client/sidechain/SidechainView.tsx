@@ -203,19 +203,13 @@ export function SidechainView(props: SidechainViewProps) {
   const selectedKey = selected === undefined ? undefined : `${parentSessionId}:${selected.id}`
   const [transcript, setTranscript] = useState<TranscriptState>({ owner: undefined, status: 'loading', snapshot: undefined })
   const transcriptEpoch = useRef(0)
-  const transcriptSelection = useRef<string | undefined>(undefined)
-  const transcriptRetry = useRef(0)
   const [transcriptRetryNonce, setTranscriptRetryNonce] = useState(0)
 
   // A transcript belongs to exactly one selected-child lifecycle. The same
   // epoch guards both timer reads and late promises after selection/hide.
   useEffect(() => {
     const epoch = ++transcriptEpoch.current
-    const previousKey = transcriptSelection.current
-    const retryChanged = transcriptRetryNonce !== transcriptRetry.current
-    transcriptRetry.current = transcriptRetryNonce
     if (!visible || selected === undefined || selectedKey === undefined) return
-    transcriptSelection.current = selectedKey
 
     const address: SidebarSubagentAddress = {
       parentSessionId,
@@ -241,12 +235,12 @@ export function SidechainView(props: SidechainViewProps) {
       }
     }
 
-    // Initial inactive children are read once. Running children read now and
-    // continue on the local timer; retry always forces one immediate read.
-    setTranscript(previous => previous.owner === selectedKey && previous.snapshot !== undefined
-      ? previous
-      : { owner: selectedKey, status: 'loading', snapshot: undefined })
-    if (previousKey !== selectedKey || retryChanged || selected.activity === 'running') void read()
+    // Every visible selected-child setup performs one immediate read. Running
+    // children continue on the local timer; a setup cleanup/restart (including
+    // StrictMode, visibility, status, and retry transitions) must not suppress
+    // that read based on a prior effect identity.
+    setTranscript({ owner: selectedKey, status: 'loading', snapshot: undefined })
+    void read()
     const timer = selected.activity === 'running'
       ? globalThis.setInterval(() => { void read() }, ACTIVITY_POLL_MS)
       : undefined
