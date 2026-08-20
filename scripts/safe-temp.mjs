@@ -287,6 +287,12 @@ async function launch(pidFile, logFile, command, args) {
     const targetName = `${envPrefix}_TARGET`
     const countName = `${envPrefix}_COUNT`
     const argsName = `${envPrefix}_ARG_`
+    const wrapperName = `${envPrefix}_WRAPPER`
+    // The /c command references only this randomized name. Double carets for
+    // the for /f handoff; literal percent signs are not recursively expanded,
+    // and the wrapper enables delayed expansion for its out-of-band
+    // command/argument values.
+    childEnv[wrapperName] = wrapper.replace(/\^/g, '^^')
     childEnv[targetName] = `"${batchCommand}"`
     childEnv[countName] = String(args.length)
     args.forEach((arg, index) => { childEnv[`${argsName}${index}`] = quoteWindowsArg(arg) })
@@ -299,7 +305,7 @@ async function launch(pidFile, logFile, command, args) {
       `!${invocationName}!`,
     ]
     fs.writeFileSync(wrapper, `${lines.join('\r\n')}\r\n`, { flag: 'wx', mode: 0o600 })
-    childArgs = ['/d', '/c', `""${wrapper}""`]
+    childArgs = ['/d', '/v:on', '/c', `for /f "delims=" %W in ("!${wrapperName}!") do @"%W"`]
   }
   const child = spawn(batchCommand ? (process.env.ComSpec || 'cmd.exe') : executable, childArgs, {
     detached: process.platform !== 'win32',

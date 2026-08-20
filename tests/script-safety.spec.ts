@@ -253,11 +253,13 @@ describe('verification script scratch safety', () => {
   it('launches a Windows .cmd shim with metacharacter arguments unchanged', async () => {
     if (process.platform !== 'win32') return
     const { sandbox } = createSandbox()
-    const hostilePath = join(sandbox, 'path with & spaces')
+    const hostilePath = join(sandbox, 'path %PATH% !bang ^caret (paren) & spaces')
+    const targetPath = join(sandbox, 'target')
     mkdirSync(hostilePath)
-    const shim = join(hostilePath, 'explicit-override.cmd')
-    const capture = join(hostilePath, 'capture.mjs')
-    const output = join(hostilePath, 'argv.json')
+    mkdirSync(targetPath)
+    const shim = join(targetPath, 'explicit-override.cmd')
+    const capture = join(targetPath, 'capture.mjs')
+    const output = join(targetPath, 'argv.json')
     const pidFile = join(hostilePath, 'shim.pid')
     const logFile = join(hostilePath, 'shim.log')
     const sentinel = join(sandbox, 'PWNED.txt')
@@ -271,6 +273,22 @@ describe('verification script scratch safety', () => {
       expect(launcher.exitCode).toBe(0)
       expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected)
       expect(existsSync(sentinel)).toBe(false)
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  it('propagates a Windows .cmd shim exit status exactly', async () => {
+    if (process.platform !== 'win32') return
+    const { sandbox } = createSandbox()
+    const target = join(sandbox, 'status.cmd')
+    const pidFile = join(sandbox, 'status.pid')
+    const logFile = join(sandbox, 'status.log')
+    writeFileSync(target, '@echo off\r\nexit /b 37\r\n')
+    try {
+      const launcher = invokeAsync(['launch', pidFile, logFile, target])
+      await new Promise<void>((resolve) => launcher.once('exit', () => resolve()))
+      expect(launcher.exitCode).toBe(37)
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }
