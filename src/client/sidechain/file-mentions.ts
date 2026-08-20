@@ -78,12 +78,20 @@ function relativeTo(cwd: string | undefined, path: string): string | undefined {
   if (cwd === undefined || cwd === '') return undefined
   const base = normalizeSeparators(cwd).replace(/\/+$/, '')
   const normalizedPath = normalizeSeparators(path)
-  const prefix = `${base.toLowerCase()}/`
-  if (!normalizedPath.toLowerCase().startsWith(prefix)) return undefined
+  const caseInsensitive = isWindowsPath(cwd) || isWindowsPath(path)
+  const comparableBase = caseInsensitive ? base.toLowerCase() : base
+  const comparablePath = caseInsensitive ? normalizedPath.toLowerCase() : normalizedPath
+  const prefix = `${comparableBase}/`
+  if (!comparablePath.startsWith(prefix)) return undefined
   return normalizedPath.slice(base.length + 1)
 }
 
 /** Compare paths lexically across POSIX/Windows separator spellings. */
 function normalizeSeparators(path: string): string {
   return path.replace(/\\/g, '/')
+}
+
+/** Windows drive and UNC roots use case-insensitive containment semantics. */
+function isWindowsPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || /^[\\/]{2}[^\\/]/.test(path)
 }

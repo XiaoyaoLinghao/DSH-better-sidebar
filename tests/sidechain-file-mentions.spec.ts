@@ -78,6 +78,16 @@ describe('fileMentionsFor', () => {
     expect(openFile).toHaveBeenCalledWith('C:\\repo\\src\\a.ts')
   })
 
+  it('does not case-fold POSIX cwd containment', () => {
+    const mentions = fileMentionsFor(
+      ['/work/Repo/src/a.ts'],
+      '/work/repo',
+      () => {},
+    )
+
+    expect(mentions.resolve('src/a.ts')).toBeUndefined()
+  })
+
   it('resolves cwd-relative mentions under a UNC cwd', () => {
     const openFile = vi.fn()
     const mentions = fileMentionsFor(
