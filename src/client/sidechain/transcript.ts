@@ -74,9 +74,22 @@ function lastSeedEnd(events: readonly SessionEvent[]): number {
 export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptRow[] {
   const events = entries.map(entry => entry.event)
   const seedEnd = lastSeedEnd(events)
-  const rows: TranscriptRow[] = []
+  type RowRecord = { row: TranscriptRow; streamKey?: string; callId?: string }
+  const records: RowRecord[] = []
   const streamRows = new Map<string, number>()
   const callRows = new Map<string, number>()
+
+  // Structural replacement can remove rows around surviving tool/stream rows.
+  // Rebuild both index maps after each replacement so later events always point
+  // at the current record positions.
+  const reindex = (): void => {
+    streamRows.clear()
+    callRows.clear()
+    records.forEach((record, index) => {
+      if (record.streamKey !== undefined) streamRows.set(record.streamKey, index)
+      if (record.callId !== undefined) callRows.set(record.callId, index)
+    })
+  }
 
   for (let index = 0; index < events.length; index++) {
     if (index <= seedEnd) continue
@@ -91,16 +104,16 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
           ? (source as Record<string, unknown>).kind
           : undefined
         if (sourceKind === undefined || sourceKind === 'user') {
-          rows.push({ kind: 'user', seq: event.seq, text })
+          records.push({ row: { kind: 'user', seq: event.seq, text } })
         } else {
           const provenance = contextProvenance(source)
-          rows.push({
+          records.push({ row: {
             kind: 'context',
             seq: event.seq,
             text,
             source: provenance.label,
             recall: provenance.role === 'recall',
-          })
+          } })
         }
         break
       }
@@ -111,11 +124,14 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
         const key = `${event.data.turn}:${event.data.step}:${chunk.index}:${kind}`
         const existing = streamRows.get(key)
         if (existing !== undefined) {
-          const row = rows[existing]
-          if (row !== undefined && row.kind === kind) rows[existing] = { ...row, text: row.text + chunk.text }
+          const record = records[existing]
+          const row = record?.row
+          if (record !== undefined && row !== undefined && row.kind === kind) {
+            record.row = { ...row, text: row.text + chunk.text }
+          }
         } else {
-          streamRows.set(key, rows.length)
-          rows.push({ kind, seq: event.seq, text: chunk.text })
+          streamRows.set(key, records.length)
+          records.push({ row: { kind, seq: event.seq, text: chunk.text }, streamKey: key })
         }
         break
       }
@@ -135,21 +151,44 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
         if (settled.length === 0 && event.data.message.content.length === 0) {
           settled.push({ kind: 'assistant', seq: event.seq, text: '…' })
         }
-        if (streamed.length === 0) rows.push(...settled)
-        else rows.splice(Math.min(...streamed), streamed.length, ...settled)
+        if (streamed.length === 0) {
+          records.push(...settled.map(row => ({ row })))
+        } else {
+          // Stream rows need not be adjacent: tool calls can be emitted between
+          // chunks. Remove exactly the settled stream records, preserve every
+          // unrelated row, and insert the assembled message at the first target.
+          const targets = new Set(streamed)
+          const replacement: RowRecord[] = []
+          let inserted = false
+          for (let rowIndex = 0; rowIndex < records.length; rowIndex++) {
+            if (targets.has(rowIndex)) {
+              if (!inserted) {
+                replacement.push(...settled.map(row => ({ row })))
+                inserted = true
+              }
+            } else {
+              replacement.push(records[rowIndex]!)
+            }
+          }
+          records.splice(0, records.length, ...replacement)
+          reindex()
+        }
         break
       }
       case 'tool/call': {
         const data = event.data
-        callRows.set(data.callId, rows.length)
-        rows.push({
-          kind: 'tool',
-          seq: event.seq,
-          name: data.name,
-          failed: false,
-          detail: {
-            arguments: data.arguments,
-            ...(view !== undefined && view.for === 'call' ? { callView: view.view } : {}),
+        callRows.set(data.callId, records.length)
+        records.push({
+          callId: data.callId,
+          row: {
+            kind: 'tool',
+            seq: event.seq,
+            name: data.name,
+            failed: false,
+            detail: {
+              arguments: data.arguments,
+              ...(view !== undefined && view.for === 'call' ? { callView: view.view } : {}),
+            },
           },
         })
         break
@@ -162,9 +201,10 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
         const error = data.error
         const failed = error !== undefined || (resultBlock?.type === 'tool-result' && resultBlock.isError === true)
         if (rowIndex !== undefined) {
-          const row = rows[rowIndex]
-          if (row !== undefined && row.kind === 'tool') {
-            rows[rowIndex] = {
+          const record = records[rowIndex]
+          const row = record?.row
+          if (record !== undefined && row !== undefined && row.kind === 'tool') {
+            record.row = {
               ...row,
               failed,
               detail: {
@@ -175,12 +215,13 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
             }
           }
         } else if (failed) {
-          rows.push({
-            kind: 'tool',
-            seq: event.seq,
-            name: 'tool',
-            failed: true,
-            ...(error === undefined ? {} : { detail: { error } }),
+          records.push({ row: {
+              kind: 'tool',
+              seq: event.seq,
+              name: 'tool',
+              failed: true,
+              ...(error === undefined ? {} : { detail: { error } }),
+            },
           })
         }
         break
@@ -189,7 +230,7 @@ export function transcriptRows(entries: readonly TranscriptEntry[]): TranscriptR
         break
     }
   }
-  return rows
+  return records.map(record => record.row)
 }
 
 /** Derive mutation paths from successful call presentations, once each. */

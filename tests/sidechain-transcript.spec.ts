@@ -28,15 +28,23 @@ describe('blockText', () => {
 })
 
 describe('transcriptRows', () => {
-  it('cuts at the last seed boundary and omits the boundary prompt', () => {
+  it('cuts at the last seed boundary', () => {
     expect(transcriptRows(entries(
       event('user/message', 1, { content: [{ type: 'text', text: 'parent' }] }),
       event('session/end-seed', 2, {}),
-      event('user/message', 3, { content: [{ type: 'text', text: 'Side conversation boundary.\n\nseed' }] }),
-      event('assistant/message', 4, { message: { content: [{ type: 'text', text: 'child' }] } }),
+      event('user/message', 3, { content: [{ type: 'text', text: 'child before latest marker' }] }),
+      event('assistant/message', 4, { message: { content: [{ type: 'text', text: 'answer before latest marker' }] } }),
       event('session/end-seed', 5, {}),
       event('user/message', 6, { content: [{ type: 'text', text: 'latest' }] }),
     ))).toEqual([{ kind: 'user', seq: 6, text: 'latest' }])
+  })
+
+  it('omits the boundary prompt after the operative seed marker', () => {
+    expect(transcriptRows(entries(
+      event('session/end-seed', 10, {}),
+      event('user/message', 11, { content: [{ type: 'text', text: 'Side conversation boundary.\n\nEverything before this boundary is reference context only.' }] }),
+      event('user/message', 12, { content: [{ type: 'text', text: 'child prompt' }] }),
+    ))).toEqual([{ kind: 'user', seq: 12, text: 'child prompt' }])
   })
 
   it('projects user and context provenance', () => {
@@ -66,6 +74,24 @@ describe('transcriptRows', () => {
       event('assistant/chunk', 2, { turn: 1, step: 2, chunk: { type: 'text-delta', index: 0, text: 'lo' } }),
       event('assistant/message', 3, { turn: 1, step: 2, message: { content: [{ type: 'text', text: 'hello!' }] } }),
     ))).toEqual([{ kind: 'assistant', seq: 3, text: 'hello!' }])
+  })
+
+  it('replaces interleaved stream rows without dropping tools or breaking later updates', () => {
+    expect(transcriptRows(entries(
+      event('assistant/chunk', 1, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'partial answer' } }),
+      event('tool/call', 2, { callId: 'c1', name: 'edit', arguments: '{}' }),
+      event('assistant/chunk', 3, { turn: 1, step: 1, chunk: { type: 'reasoning-delta', index: 1, text: 'partial reasoning' } }),
+      event('assistant/message', 4, { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'settled answer' }] } }),
+      event('tool/result', 5, {
+        message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [], isError: true }] },
+        error: { name: 'EditFailed', code: 'EDIT' },
+      }),
+      event('assistant/chunk', 6, { turn: 1, step: 1, chunk: { type: 'text-delta', index: 2, text: 'tail' } }),
+    ))).toEqual([
+      { kind: 'assistant', seq: 4, text: 'settled answer' },
+      { kind: 'tool', seq: 2, name: 'edit', failed: true, detail: { arguments: '{}', error: { name: 'EditFailed', code: 'EDIT' } } },
+      { kind: 'assistant', seq: 6, text: 'tail' },
+    ])
   })
 
   it('pairs tool results and surfaces orphan failures', () => {
