@@ -1,6 +1,8 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
+import { apply } from '../src/index.ts'
+import * as sidechainHost from '../src/sidechain-host/index.ts'
 import { registerSidechainHost, sidechainRegistryPath } from '../src/sidechain-host/index.ts'
 
 interface Harness {
@@ -16,11 +18,27 @@ interface Harness {
   }
 }
 
-function makeHarness(options: { commands?: boolean; subagents?: boolean } = {}): Harness {
+interface AdmissionAgent {
+  id: string
+  followup: (...args: unknown[]) => unknown
+  steer: (...args: unknown[]) => unknown
+  inject: (...args: unknown[]) => unknown
+}
+
+function makeHarness(options: {
+  commands?: boolean
+  subagents?: boolean
+  liveAgents?: AdmissionAgent[]
+  listenerDisposer?: ReturnType<typeof vi.fn>
+} = {}): Harness {
   const cleanups: Array<() => void> = []
   const registered: unknown[] = []
   const commandDisposers: Array<ReturnType<typeof vi.fn>> = []
-  const agents = { list: () => [], on: vi.fn(() => vi.fn()) }
+  const listenerDisposer = options.listenerDisposer ?? vi.fn()
+  const agents = {
+    list: () => options.liveAgents ?? [],
+    on: vi.fn(() => listenerDisposer),
+  }
   const subagents = {
     start: vi.fn(),
     startContinuable: vi.fn(),
@@ -42,18 +60,68 @@ function makeHarness(options: { commands?: boolean; subagents?: boolean } = {}):
   const inject = vi.fn((deps: string[], callback: (ctx: any) => void) => {
     if (deps.includes('agents') && deps.includes('subagents')) {
       if (options.subagents === false) return
-      callback({ agents, subagents, inject, effect, on: vi.fn(() => vi.fn()), logger: { warn: vi.fn(), error: vi.fn() } })
+      callback({ agents, subagents, inject, effect, on: vi.fn(() => listenerDisposer), logger: { warn: vi.fn(), error: vi.fn() } })
       return
     }
     if (deps.includes('commands')) {
       if (options.commands === false) return
-      callback({ agents, subagents, commands, inject, effect, on: vi.fn(() => vi.fn()), logger: { warn: vi.fn(), error: vi.fn() } })
+      callback({ agents, subagents, commands, inject, effect, on: vi.fn(() => listenerDisposer), logger: { warn: vi.fn(), error: vi.fn() } })
     }
   })
   return { ctx: { inject, effect }, cleanups, commandDisposers, registered, subagents }
 }
 
+function makeApplyContext() {
+  const effects: Array<() => void> = []
+  return {
+    webRuntime: { trustedHosts: [] },
+    webServer: {
+      register: () => () => {},
+      registerUpgrade: () => () => {},
+    },
+    sessions: { get: () => undefined },
+    tools: { register: () => () => {} },
+    effect: (fn: () => void | (() => void)) => {
+      const cleanup = fn()
+      if (typeof cleanup === 'function') effects.push(cleanup)
+    },
+    inject: () => () => {},
+    get: () => undefined,
+    effects,
+  }
+}
+
+function makeAdmissionAgent(): { agent: AdmissionAgent; originals: Record<'followup' | 'steer' | 'inject', AdmissionAgent['followup']> } {
+  const originals = {
+    followup: vi.fn(),
+    steer: vi.fn(),
+    inject: vi.fn(),
+  }
+  return { agent: { id: 'parent', ...originals }, originals }
+}
+
 describe('sidechain host activation', () => {
+  it('wires activation exactly once from apply with the resolved sidechain config', () => {
+    const activation = vi.spyOn(sidechainHost, 'registerSidechainHost')
+    const ctx = makeApplyContext()
+    apply(ctx as never, {
+      sidechain: {
+        providerName: 'custom-provider',
+        persona: 'custom-persona',
+        readOnlyTools: ['fs.read'],
+      },
+    })
+
+    expect(activation).toHaveBeenCalledTimes(1)
+    expect(activation).toHaveBeenCalledWith(ctx, {
+      providerName: 'custom-provider',
+      persona: 'custom-persona',
+      readOnlyTools: ['fs.read'],
+    })
+    for (const cleanup of ctx.effects) cleanup()
+    activation.mockRestore()
+  })
+
   it('registers both commands and applies an exact read-only restriction', async () => {
     const harness = makeHarness()
     registerSidechainHost(harness.ctx as never, {
@@ -134,10 +202,19 @@ describe('sidechain host activation', () => {
   })
 
   it('owns command and isolation cleanup by Cordis effects', () => {
-    const harness = makeHarness()
+    const { agent, originals } = makeAdmissionAgent()
+    const listenerDisposer = vi.fn()
+    const harness = makeHarness({ liveAgents: [agent], listenerDisposer })
     registerSidechainHost(harness.ctx as never, { providerName: 'fork', persona: 'persona' })
     expect(harness.commandDisposers).toHaveLength(2)
+    expect(agent.followup).not.toBe(originals.followup)
+    expect(agent.steer).not.toBe(originals.steer)
+    expect(agent.inject).not.toBe(originals.inject)
     for (const cleanup of harness.cleanups) cleanup()
     expect(harness.commandDisposers.every(dispose => dispose.mock.calls.length === 1)).toBe(true)
+    expect(listenerDisposer).toHaveBeenCalledTimes(1)
+    expect(agent.followup).toBe(originals.followup)
+    expect(agent.steer).toBe(originals.steer)
+    expect(agent.inject).toBe(originals.inject)
   })
 })
