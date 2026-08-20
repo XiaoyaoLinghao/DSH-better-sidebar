@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { apply } from '../src/index.ts'
 import * as sidechainHost from '../src/sidechain-host/index.ts'
 import { registerSidechainHost, sidechainRegistryPath } from '../src/sidechain-host/index.ts'
+import { SIDE_PERSONA } from '../src/sidechain-host/prompts.ts'
 
 interface Harness {
   ctx: {
@@ -13,6 +14,7 @@ interface Harness {
   cleanups: Array<() => void>
   commandDisposers: Array<ReturnType<typeof vi.fn>>
   registered: unknown[]
+  eventRegistrations: Array<[string, unknown]>
   subagents: {
     start: ReturnType<typeof vi.fn>
   }
@@ -29,15 +31,18 @@ function makeHarness(options: {
   commands?: boolean
   subagents?: boolean
   liveAgents?: AdmissionAgent[]
-  listenerDisposer?: ReturnType<typeof vi.fn>
+  agentCreatedDisposer?: ReturnType<typeof vi.fn>
+  genericListenerDisposer?: ReturnType<typeof vi.fn>
 } = {}): Harness {
   const cleanups: Array<() => void> = []
   const registered: unknown[] = []
   const commandDisposers: Array<ReturnType<typeof vi.fn>> = []
-  const listenerDisposer = options.listenerDisposer ?? vi.fn()
+  const eventRegistrations: Array<[string, unknown]> = []
+  const agentCreatedDisposer = options.agentCreatedDisposer ?? vi.fn()
+  const genericListenerDisposer = options.genericListenerDisposer ?? vi.fn()
   const agents = {
     list: () => options.liveAgents ?? [],
-    on: vi.fn(() => listenerDisposer),
+    on: vi.fn(() => genericListenerDisposer),
   }
   const subagents = {
     start: vi.fn(),
@@ -57,18 +62,37 @@ function makeHarness(options: {
     const cleanup = fn()
     if (typeof cleanup === 'function') cleanups.push(cleanup)
   })
+  const on = vi.fn((event: string, handler: unknown) => {
+    eventRegistrations.push([event, handler])
+    return event === 'agent/created' ? agentCreatedDisposer : genericListenerDisposer
+  })
   const inject = vi.fn((deps: string[], callback: (ctx: any) => void) => {
     if (deps.includes('agents') && deps.includes('subagents')) {
       if (options.subagents === false) return
-      callback({ agents, subagents, inject, effect, on: vi.fn(() => listenerDisposer), logger: { warn: vi.fn(), error: vi.fn() } })
+      callback({
+        agents,
+        subagents,
+        inject,
+        effect,
+        on,
+        logger: { warn: vi.fn(), error: vi.fn() },
+      })
       return
     }
     if (deps.includes('commands')) {
       if (options.commands === false) return
-      callback({ agents, subagents, commands, inject, effect, on: vi.fn(() => listenerDisposer), logger: { warn: vi.fn(), error: vi.fn() } })
+      callback({
+        agents,
+        subagents,
+        commands,
+        inject,
+        effect,
+        on,
+        logger: { warn: vi.fn(), error: vi.fn() },
+      })
     }
   })
-  return { ctx: { inject, effect }, cleanups, commandDisposers, registered, subagents }
+  return { ctx: { inject, effect }, cleanups, commandDisposers, registered, eventRegistrations, subagents }
 }
 
 function makeApplyContext() {
@@ -106,16 +130,14 @@ describe('sidechain host activation', () => {
     const ctx = makeApplyContext()
     apply(ctx as never, {
       sidechain: {
-        providerName: 'custom-provider',
-        persona: 'custom-persona',
         readOnlyTools: ['fs.read'],
       },
     })
 
     expect(activation).toHaveBeenCalledTimes(1)
     expect(activation).toHaveBeenCalledWith(ctx, {
-      providerName: 'custom-provider',
-      persona: 'custom-persona',
+      providerName: 'fork',
+      persona: SIDE_PERSONA,
       readOnlyTools: ['fs.read'],
     })
     for (const cleanup of ctx.effects) cleanup()
@@ -203,8 +225,8 @@ describe('sidechain host activation', () => {
 
   it('owns command and isolation cleanup by Cordis effects', () => {
     const { agent, originals } = makeAdmissionAgent()
-    const listenerDisposer = vi.fn()
-    const harness = makeHarness({ liveAgents: [agent], listenerDisposer })
+    const agentCreatedDisposer = vi.fn()
+    const harness = makeHarness({ liveAgents: [agent], agentCreatedDisposer })
     registerSidechainHost(harness.ctx as never, { providerName: 'fork', persona: 'persona' })
     expect(harness.commandDisposers).toHaveLength(2)
     expect(agent.followup).not.toBe(originals.followup)
@@ -212,7 +234,10 @@ describe('sidechain host activation', () => {
     expect(agent.inject).not.toBe(originals.inject)
     for (const cleanup of harness.cleanups) cleanup()
     expect(harness.commandDisposers.every(dispose => dispose.mock.calls.length === 1)).toBe(true)
-    expect(listenerDisposer).toHaveBeenCalledTimes(1)
+    expect(harness.eventRegistrations).toEqual([
+      ['agent/created', expect.any(Function)],
+    ])
+    expect(agentCreatedDisposer).toHaveBeenCalledTimes(1)
     expect(agent.followup).toBe(originals.followup)
     expect(agent.steer).toBe(originals.steer)
     expect(agent.inject).toBe(originals.inject)
