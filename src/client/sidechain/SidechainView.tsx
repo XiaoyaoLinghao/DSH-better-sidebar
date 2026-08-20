@@ -79,13 +79,22 @@ export function SidechainView(props: SidechainViewProps) {
   const [activity, setActivity] = useState<Record<string, string>>({})
   const requestEpoch = useRef(0)
 
+  // Activity is addressed by parent + child. Never carry a parent's line into
+  // another parent's catalog, even when both catalogs contain the same child ID.
+  useEffect(() => {
+    setActivity(previous => Object.keys(previous).length === 0 ? previous : {})
+  }, [parentSessionId])
+
   // Activity is a small live hint, not a catalog source. Poll only running
   // rows, and invalidate both the interval and in-flight responses on every
   // lifecycle change.
   useEffect(() => {
     requestEpoch.current++
     const epoch = requestEpoch.current
-    if (!visible) return
+    if (!visible || catalog?.state !== 'ready') {
+      setActivity(previous => Object.keys(previous).length === 0 ? previous : {})
+      return
+    }
     const running = entries.filter(
       (entry): entry is SidebarSubagentChildEntry => entry.kind === 'child' && entry.activity === 'running',
     )
@@ -132,7 +141,7 @@ export function SidechainView(props: SidechainViewProps) {
       abort.abort()
       globalThis.clearInterval(timer)
     }
-  }, [entries, history, parentSessionId, visible])
+  }, [catalog?.state, entries, history, parentSessionId, visible])
 
   const refresh = useCallback(() => {
     void sessions.refreshSubagents?.(parentSessionId)

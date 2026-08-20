@@ -224,4 +224,77 @@ describe('SidechainView list shell', () => {
     expect(mounted.container.textContent).not.toContain('stale')
     unmount(mounted.root, mounted.container)
   })
+
+  it('clears activity when switching parents even if the same child has no new activity', async () => {
+    vi.useFakeTimers()
+    let parentCalls = 0
+    let resolveLate!: (value: string | null) => void
+    const lateParentResponse = new Promise<string | null>(resolve => { resolveLate = resolve })
+    let otherCalls = 0
+    const sessionFeed = feed({
+      current: 'parent', byId: {},
+      subagentsByParent: {
+        parent: catalog({ entries: [child('run', 'continuable', 'running')] }),
+        other: catalog({ entries: [child('run', 'continuable', 'running')] }),
+      },
+    })
+    const fetchActivity = vi.fn((address: SidebarSubagentAddress) => {
+      if (address.parentSessionId === 'parent') {
+        parentCalls++
+        return parentCalls === 1 ? Promise.resolve('old activity') : lateParentResponse
+      }
+      otherCalls++
+      return otherCalls === 1
+        ? Promise.resolve(null)
+        : Promise.reject(new Error('other unavailable'))
+    })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, { history: { fetchActivity } })))
+    await act(async () => { await Promise.resolve() })
+    expect(mounted.container.textContent).toContain('old activity')
+
+    await act(async () => { vi.advanceTimersByTime(3000); await Promise.resolve() })
+    expect(parentCalls).toBe(2)
+    mounted.rerender(createElement(SidechainView, props(sessionFeed, { parentSessionId: 'other', history: { fetchActivity } })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(mounted.container.textContent).not.toContain('old activity')
+
+    await act(async () => { resolveLate('late parent activity'); await lateParentResponse })
+    expect(mounted.container.textContent).not.toContain('late parent activity')
+    await act(async () => { vi.advanceTimersByTime(3000); await Promise.resolve() })
+    expect(otherCalls).toBe(2)
+    expect(mounted.container.textContent).not.toContain('old activity')
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('does not poll activity while a catalog is loading or in error', async () => {
+    vi.useFakeTimers()
+    const entries = [child('run', 'continuable', 'running')]
+    const sessionFeed = feed({
+      current: 'parent', byId: {},
+      subagentsByParent: { parent: catalog({ entries }) },
+    })
+    const fetchActivity = vi.fn(async (address: SidebarSubagentAddress) => address.childSessionId)
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, { history: { fetchActivity } })))
+    await act(async () => { await Promise.resolve() })
+    expect(fetchActivity).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      sessionFeed.set({
+        ...sessionFeed.list.getSnapshot(),
+        subagentsByParent: { parent: catalog({ state: 'loading', entries }) },
+      })
+    })
+    await act(async () => { vi.advanceTimersByTime(6000); await Promise.resolve() })
+    expect(fetchActivity).toHaveBeenCalledTimes(1)
+
+    act(() => {
+      sessionFeed.set({
+        ...sessionFeed.list.getSnapshot(),
+        subagentsByParent: { parent: catalog({ state: 'error', entries, error: { message: 'unavailable' } }) },
+      })
+    })
+    await act(async () => { vi.advanceTimersByTime(6000); await Promise.resolve() })
+    expect(fetchActivity).toHaveBeenCalledTimes(1)
+    unmount(mounted.root, mounted.container)
+  })
 })
