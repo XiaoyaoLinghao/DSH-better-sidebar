@@ -79,6 +79,25 @@ describe('settlement silence runtime', () => {
     expect(originals[method]).toHaveBeenNthCalledWith(3, messages[2])
   })
 
+  it.each(['followup', 'steer', 'inject'] as Admission[])('passes recorded-child sources with wrong or missing required fields through %s', (method) => {
+    const { agent, originals } = makeAgent('parent')
+    const ctx = makeContext([agent])
+    const runtime = createSettlementSilenceRuntime(ctx as never)
+    runtime.noteChild('side-1')
+
+    const messages = [
+      { role: 'user', content: [], source: { kind: 'subagent-report', form: 'notice', senderSessionId: 'side-1' } },
+      { role: 'user', content: [], source: { kind: 'subagent-report', senderSessionId: 'side-1' } },
+      { role: 'user', content: [], source: { kind: 'subagent-settled', form: 'relay', summary: 'done', senderSessionId: 'side-1' } },
+      { role: 'user', content: [], source: { kind: 'subagent-settled', form: 'notice', senderSessionId: 'side-1' } },
+      { role: 'user', content: [], source: { kind: 'subagent-settled', form: 'notice', summary: 42, senderSessionId: 'side-1' } },
+      { role: 'user', content: [], source: { kind: 'subagent-settled', form: 'notice', summary: 'done' } },
+    ]
+    for (const message of messages) agent[method](message)
+
+    expect(originals[method]).toHaveBeenCalledTimes(messages.length)
+  })
+
   it('wraps agents created after runtime setup and restores exact descriptors on dispose', () => {
     const { agent, originals } = makeAgent('live')
     const descriptors = Object.fromEntries(

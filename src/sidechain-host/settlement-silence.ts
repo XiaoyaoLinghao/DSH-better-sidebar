@@ -1,3 +1,9 @@
+/**
+ * Portions of this file are adapted from @dsh-external/dsh-sidechain,
+ * Copyright (c) 2026, dsh-external contributors, under the BSD-3-Clause
+ * License. See THIRD_PARTY_NOTICES for the complete notice.
+ */
+
 import type { Context } from 'cordis'
 
 const ADMISSION_METHODS = ['followup', 'steer', 'inject'] as const
@@ -23,6 +29,8 @@ interface AgentRestore {
 
 interface MessageSource {
   kind?: unknown
+  form?: unknown
+  summary?: unknown
   senderSessionId?: unknown
 }
 
@@ -47,8 +55,12 @@ export function createSettlementSilenceRuntime(ctx: Context): {
     if (message === null || typeof message !== 'object') return false
     const source = (message as { source?: MessageSource }).source
     if (source === null || typeof source !== 'object') return false
-    if (source.kind !== 'subagent-report' && source.kind !== 'subagent-settled') return false
-    return typeof source.senderSessionId === 'string' && childIds.has(source.senderSessionId)
+    if (typeof source.senderSessionId !== 'string' || !childIds.has(source.senderSessionId)) return false
+    if (source.kind === 'subagent-report') return source.form === 'relay'
+    if (source.kind === 'subagent-settled') {
+      return source.form === 'notice' && typeof source.summary === 'string'
+    }
+    return false
   }
 
   const wrapAgent = (agent: AdmissionAgent): void => {
