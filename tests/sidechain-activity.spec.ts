@@ -40,6 +40,16 @@ describe('readActivityRound', () => {
     )).resolves.toBeUndefined()
     expect(published).toEqual(['ok:ready'])
   })
+
+  it('does not publish empty or whitespace-only lines while publishing normal siblings', async () => {
+    const published: string[] = []
+    await readActivityRound(
+      ['empty', 'spaces', 'ok'],
+      row => Promise.resolve(row === 'empty' ? '' : row === 'spaces' ? '  \t' : 'ready'),
+      (row, line) => { published.push(`${row}:${line}`) },
+    )
+    expect(published).toEqual(['ok:ready'])
+  })
 })
 
 describe('salientToolArg', () => {

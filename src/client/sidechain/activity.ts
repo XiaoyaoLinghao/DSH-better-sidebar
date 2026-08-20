@@ -17,7 +17,7 @@ export async function readActivityRound<Row>(
 ): Promise<void> {
   await Promise.allSettled(rows.map(async row => {
     const line = await read(row)
-    if (line !== null) publish(row, line)
+    if (line !== null && line.trim() !== '') publish(row, line)
   }))
 }
 
