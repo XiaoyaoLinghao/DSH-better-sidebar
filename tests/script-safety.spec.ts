@@ -208,10 +208,18 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('pnpm pack --pack-destination "$SCRATCH"')
     expect(script).toContain('node "$SAFE_TEMP" launch')
     expect(script).toContain('DSH_MODE=pnpm')
-    expect(script).toContain('pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" "$@"')
-    expect(script).toContain('pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" web --port "$PORT"')
+    expect(script).toContain("DSH_DLX_BIN='dlx'")
+    expect(script).toContain('--allow-build=node-pty')
+    expect(script).toContain('--allow-build=protobufjs')
+    expect(script).toContain('--allow-build=@deepseek-ai/dsh-subprocess-local')
+    expect(script).toContain('--allow-build=koffi')
+    expect(script).toContain("DSH_DLX_PACKAGE='@deepseek-ai/dsh@0.1.0-rc.8'")
+    expect(script).toContain('pnpm "$DSH_DLX_BIN" "$DSH_DLX_ALLOW_NODE_PTY" "$DSH_DLX_ALLOW_PROTOBUFJS" "$DSH_DLX_ALLOW_SUBPROCESS" "$DSH_DLX_ALLOW_KOFFI" "$DSH_DLX_PACKAGE" "$@"')
+    expect(script).toContain('node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm "$DSH_DLX_BIN" "$DSH_DLX_ALLOW_NODE_PTY" "$DSH_DLX_ALLOW_PROTOBUFJS" "$DSH_DLX_ALLOW_SUBPROCESS" "$DSH_DLX_ALLOW_KOFFI" "$DSH_DLX_PACKAGE" web --port "$PORT"')
     expect(script).not.toContain('"@deepseek-ai/dsh@0.1.0-rc.8" dsh')
-    expect(script).toContain('DSH_MOUNT_PROBE=1')
+    expect(script).toContain('--probe-default-cli')
+    expect(script).toContain('"@deepseek-ai/dsh-subprocess-local": true')
+    expect(script).toContain('koffi: true')
     expect(script).toContain('DSH_CMD="${DSH_CMD-}"')
     expect(script).toContain('DSH_CMD 无效')
     expect(script).toContain('typeof value.quarantine !== "string"')
@@ -232,14 +240,16 @@ describe('verification script scratch safety', () => {
     chmodSync(fakePnpm, 0o755)
     try {
       const pathKey = process.platform === 'win32' ? ';' : ':'
-      const result = spawnSync('bash', [resolve(process.cwd(), 'scripts/e2e-mount.sh')], {
-        env: { ...process.env, DSH_MOUNT_PROBE: '1', DSH_PROBE_CAPTURE: capture, PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}` },
+      const result = spawnSync('bash', [resolve(process.cwd(), 'scripts/e2e-mount.sh'), '--probe-default-cli'], {
+        env: { ...process.env, DSH_PROBE_CAPTURE: capture, PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}` },
         encoding: 'utf8',
       })
       if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
       expect(result.status, result.stderr).toBe(0)
       expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual([
-        'dlx', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.1.0-rc.8', '--version',
+        'dlx', '--allow-build=node-pty', '--allow-build=protobufjs',
+        '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=koffi',
+        '@deepseek-ai/dsh@0.1.0-rc.8', '--version',
       ])
     } finally {
       rmSync(sandbox, { recursive: true, force: true })

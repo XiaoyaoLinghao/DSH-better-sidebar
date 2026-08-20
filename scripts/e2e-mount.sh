@@ -14,7 +14,7 @@
 #
 # 环境变量（均可省略）：
 #   DSH_CMD        可选的 dsh 命令覆盖；为空时固定使用 pnpm dlx 拉 rc8
-#   DSH_MOUNT_PROBE=1 仅供回归测试：解析默认 CLI 后执行 --version 并退出
+#   --probe-default-cli 仅供回归测试：解析默认 CLI 后执行 --version 并退出
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
@@ -52,19 +52,28 @@ else
   DSH_MODE=pnpm
 fi
 
+# Keep the exact package pin and native build allow-list in shared variables;
+# both plugin mounting and web launch must use the same pnpm dlx contract.
+DSH_DLX_BIN='dlx'
+DSH_DLX_ALLOW_NODE_PTY='--allow-build=node-pty'
+DSH_DLX_ALLOW_PROTOBUFJS='--allow-build=protobufjs'
+DSH_DLX_ALLOW_SUBPROCESS='--allow-build=@deepseek-ai/dsh-subprocess-local'
+DSH_DLX_ALLOW_KOFFI='--allow-build=koffi'
+DSH_DLX_PACKAGE='@deepseek-ai/dsh@0.1.0-rc.8'
+
 run_dsh() {
   if [ "$DSH_MODE" = pnpm ]; then
     # pnpm dlx executes the package's declared bin directly; the extra `dsh`
     # token would be treated as a CLI subcommand and breaks `plugin add`.
     # The build allow-list is scoped to this invocation so pnpm 11 never opens
     # its interactive approve-builds prompt in a fresh dlx environment.
-    pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" "$@"
+    pnpm "$DSH_DLX_BIN" "$DSH_DLX_ALLOW_NODE_PTY" "$DSH_DLX_ALLOW_PROTOBUFJS" "$DSH_DLX_ALLOW_SUBPROCESS" "$DSH_DLX_ALLOW_KOFFI" "$DSH_DLX_PACKAGE" "$@"
   else
     "$DSH_CMD" "$@"
   fi
 }
 
-if [ "${DSH_MOUNT_PROBE:-}" = "1" ]; then
+if [ "${1:-}" = "--probe-default-cli" ]; then
   run_dsh --version
   exit $?
 fi
@@ -140,7 +149,7 @@ say "tarball: $TARBALL"
 
 # 步骤 1：引导 scratch profile（web 模板，镜像 dsh initProfile；先写
 # pnpm-workspace.yaml 的 allowBuilds / minimumReleaseAgeExclude，避免 pnpm 11
-# strict-dep-builds 拦截 node-pty/protobufjs 或拒绝 <24h 新版本——同 install.sh）
+# strict-dep-builds 拦截 native hooks 或拒绝 <24h 新版本——同 install.sh）
 PROFILE_DIR="$DSH_HOME/profiles/web"
 cat > "$PROFILE_DIR/package.json" <<EOF
 {
@@ -165,6 +174,8 @@ autoInstallPeers: false
 allowBuilds:
   node-pty: true
   protobufjs: true
+  "@deepseek-ai/dsh-subprocess-local": true
+  koffi: true
 
 minimumReleaseAgeExclude:
   - dsh-better-sidebar
@@ -190,7 +201,7 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
 if [ "$DSH_MODE" = pnpm ]; then
-  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" web --port "$PORT" &
+  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm "$DSH_DLX_BIN" "$DSH_DLX_ALLOW_NODE_PTY" "$DSH_DLX_ALLOW_PROTOBUFJS" "$DSH_DLX_ALLOW_SUBPROCESS" "$DSH_DLX_ALLOW_KOFFI" "$DSH_DLX_PACKAGE" web --port "$PORT" &
 else
   node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" "$DSH_CMD" web --port "$PORT" &
 fi
