@@ -34,6 +34,7 @@ interface PluginManifest {
 interface PackageJson {
   name: string
   version: string
+  files?: string[]
 }
 
 const manifest = JSON.parse(readFileSync(resolve(ROOT, 'dsh.plugin.json'), 'utf8')) as PluginManifest
@@ -80,6 +81,12 @@ describe('registry manifest consistency (dsh.plugin.json)', () => {
 
   it('version matches package.json', () => {
     expect(manifest.version).toBe(pkg.version)
+  })
+
+  it('requires the rc.8 DSH engine and ships third-party notices', () => {
+    expect(manifest.engines?.dsh).toBe('0.1.0-rc.8')
+    expect(pkg.files).toContain('THIRD_PARTY_NOTICES')
+    expect(existsSync(resolve(ROOT, 'THIRD_PARTY_NOTICES'))).toBe(true)
   })
 
   it('main and client.main exist in the build output', () => {
