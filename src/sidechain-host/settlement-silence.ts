@@ -5,6 +5,7 @@
  */
 
 import type { Context } from 'cordis'
+import * as nodeFs from 'node:fs'
 
 const ADMISSION_METHODS = ['followup', 'steer', 'inject'] as const
 type AdmissionMethod = (typeof ADMISSION_METHODS)[number]
@@ -19,6 +20,17 @@ interface AdmissionAgent {
 interface RuntimeContext {
   agents: { list(): AdmissionAgent[] }
   on(name: string, listener: (payload: { agent: AdmissionAgent }) => void): () => unknown
+  logger?: {
+    error?: (...args: unknown[]) => unknown
+    warn?: (...args: unknown[]) => unknown
+  }
+}
+
+export interface SettlementRegistryFileSystem {
+  readFileSync(path: string, encoding: 'utf8'): string
+  writeFileSync(path: string, data: string, encoding: 'utf8'): void
+  renameSync(from: string, to: string): void
+  unlinkSync(path: string): void
 }
 
 interface AgentRestore {
@@ -42,12 +54,12 @@ interface MessageSource {
  * durable parent transcript. Persistence of the child set belongs to the
  * registry layer and is intentionally outside this process-local runtime.
  */
-export function createSettlementSilenceRuntime(ctx: Context): {
+export function createSettlementSilenceRuntime(ctx: Context, initialChildIds: Iterable<string> = []): {
   noteChild(childId: string): void
   dispose(): void
 } {
   const runtimeCtx = ctx as unknown as RuntimeContext
-  const childIds = new Set<string>()
+  const childIds = new Set(initialChildIds)
   const restores = new Map<AdmissionAgent, AgentRestore>()
   let disposed = false
 
@@ -124,4 +136,125 @@ export function createSettlementSilenceRuntime(ctx: Context): {
       childIds.clear()
     },
   }
+}
+
+export interface SettlementSilenceOptions {
+  registryPath: string
+}
+
+const nodeRegistryFileSystem: SettlementRegistryFileSystem = {
+  readFileSync: (path, encoding) => nodeFs.readFileSync(path, encoding),
+  writeFileSync: (path, data, encoding) => nodeFs.writeFileSync(path, data, encoding),
+  renameSync: (from, to) => nodeFs.renameSync(from, to),
+  unlinkSync: (path) => nodeFs.unlinkSync(path),
+}
+
+function logRegistryWarning(runtimeCtx: RuntimeContext, message: string, error: unknown): void {
+  try {
+    if (runtimeCtx.logger?.warn) {
+      runtimeCtx.logger.warn(message, error)
+    }
+  } catch {
+    // Logging must not make registry recovery fail.
+  }
+}
+
+function loadChildIds(
+  runtimeCtx: RuntimeContext,
+  registryPath: string,
+  fileSystem: SettlementRegistryFileSystem,
+): Set<string> {
+  let contents: string
+  try {
+    contents = fileSystem.readFileSync(registryPath, 'utf8')
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 'ENOENT') {
+      logRegistryWarning(runtimeCtx, '[dsh-better-sidebar] failed to load settlement registry', error)
+    }
+    return new Set()
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(contents)
+    if (!Array.isArray(parsed)) {
+      throw new Error('registry is not an array')
+    }
+    if (!parsed.every((childId): childId is string => typeof childId === 'string')) {
+      throw new Error('registry contains a non-string child ID')
+    }
+    return new Set(parsed)
+  } catch (error) {
+    logRegistryWarning(runtimeCtx, '[dsh-better-sidebar] ignoring malformed settlement registry', error)
+    return new Set()
+  }
+}
+
+function createSettlementSilenceWithFileSystem(
+  ctx: Context,
+  { registryPath }: SettlementSilenceOptions,
+  fileSystem: SettlementRegistryFileSystem,
+): { noteChild(childId: string): void; dispose(): void } {
+  const runtimeCtx = ctx as unknown as RuntimeContext
+  const childIds = loadChildIds(runtimeCtx, registryPath, fileSystem)
+  const runtime = createSettlementSilenceRuntime(ctx, childIds)
+  let disposed = false
+  const tempPath = `${registryPath}.dsh-sidebar-tmp-${process.pid}`
+
+  const reportPersistenceFailure = (error: unknown): void => {
+    const message = '[dsh-better-sidebar] failed to persist settlement registry'
+    try {
+      if (runtimeCtx.logger?.error) {
+        runtimeCtx.logger.error(message, error)
+      } else {
+        console.error(message, error)
+      }
+    } catch {
+      // Persistence reporting is best effort too.
+    }
+  }
+
+  const persist = (): void => {
+    try {
+      fileSystem.writeFileSync(tempPath, JSON.stringify([...childIds]), 'utf8')
+      fileSystem.renameSync(tempPath, registryPath)
+    } catch (error) {
+      try {
+        fileSystem.unlinkSync(tempPath)
+      } catch {
+        // The temp file may not have been created, or cleanup may fail.
+      }
+      reportPersistenceFailure(error)
+    }
+  }
+
+  return {
+    noteChild(childId: string): void {
+      if (disposed || childIds.has(childId)) return
+      runtime.noteChild(childId)
+      childIds.add(childId)
+      persist()
+    },
+    dispose(): void {
+      if (disposed) return
+      disposed = true
+      runtime.dispose()
+    },
+  }
+}
+
+/** Create process-local settlement silence with a synchronously persisted child registry. */
+export function createSettlementSilence(
+  ctx: Context,
+  options: SettlementSilenceOptions,
+): { noteChild(childId: string): void; dispose(): void } {
+  return createSettlementSilenceWithFileSystem(ctx, options, nodeRegistryFileSystem)
+}
+
+/** @internal Test-only filesystem seam; production callers should use createSettlementSilence. */
+export function createSettlementSilenceForTest(
+  ctx: Context,
+  options: SettlementSilenceOptions,
+  fileSystem: SettlementRegistryFileSystem,
+): { noteChild(childId: string): void; dispose(): void } {
+  return createSettlementSilenceWithFileSystem(ctx, options, fileSystem)
 }
