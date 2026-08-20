@@ -14,7 +14,7 @@
 #
 # 环境变量（均可省略）：
 #   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 npx 拉官方包
-#   TARBALL        插件 tarball；缺省先使用仓库根产物，否则自动 build + pack
+#   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
 #                  新建本调用拥有的独立子目录，只写入/删除该子目录；调用方
@@ -68,24 +68,27 @@ run_dsh() {
 # 临时目录。
 TEMP_BASE="${DSH_HOME_BASE:-}"
 if [ -z "$TEMP_BASE" ]; then TEMP_BASE="$(node -p "require('node:os').tmpdir()")"; fi
-SCRATCH="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' '.dsh-e2e-mount.marker')" \
+SCRATCH_INFO="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.')" \
   || die "无法创建受保护的 scratch 目录"
-export DSH_HOME="$SCRATCH/home"
-WORKSPACE_DIR="$SCRATCH/workspace"
-LOG_DIR="$SCRATCH"
-WEB_LOG="$LOG_DIR/web.log"
-mkdir -p "$DSH_HOME/profiles/web" "$WORKSPACE_DIR"
-say "scratch home: ${DSH_HOME}（DSH_HOME=${DSH_HOME}）"
-
+SCRATCH="$(node -p "JSON.parse(process.argv[1]).scratch" "$SCRATCH_INFO")"
+SCRATCH_TOKEN="$(node -p "JSON.parse(process.argv[1]).token" "$SCRATCH_INFO")"
 SERVER_PID=""
+LAUNCHER_PID=""
+CLEANED=0
 cleanup() {
   local code=$?
-  if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-    kill "$SERVER_PID" 2>/dev/null || true
-    wait "$SERVER_PID" 2>/dev/null || true
+  if [ "$CLEANED" -eq 1 ]; then return; fi
+  CLEANED=1
+  trap - EXIT 1 2 15
+  if [ -n "$SERVER_PID" ]; then
+    node "$SAFE_TEMP" terminate "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
+  if [ -n "$LAUNCHER_PID" ] && kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+    kill "$LAUNCHER_PID" 2>/dev/null || true
+    wait "$LAUNCHER_PID" 2>/dev/null || true
   fi
   if [ -z "${KEEP_HOME:-}" ]; then
-    if ! node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' '.dsh-e2e-mount.marker'; then
+    if ! node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN"; then
       warn "scratch 安全校验失败，拒绝删除：$SCRATCH"
     fi
   else
@@ -94,19 +97,22 @@ cleanup() {
   exit "$code"
 }
 trap cleanup EXIT
+trap 'exit 130' 2
+trap 'exit 143' 15
+trap 'exit 129' 1
 
-# tarball 解析；未提供 tarball 时自行 build + pack 到受保护的 scratch，
-# 这样本地和 CI 都不依赖仓库里残留的旧产物。
+export DSH_HOME="$SCRATCH/home"
+WORKSPACE_DIR="$SCRATCH/workspace"
+LOG_DIR="$SCRATCH"
+WEB_LOG="$LOG_DIR/web.log"
+PID_FILE="$LOG_DIR/web.pid"
+mkdir -p "$DSH_HOME/profiles/web" "$WORKSPACE_DIR"
+say "scratch home: ${DSH_HOME}（DSH_HOME=${DSH_HOME}）"
+
+# tarball 解析；未显式提供时始终自行 build + pack 到受保护的 scratch，
+# 避免误用仓库里残留的旧产物。
 if [ -z "$TARBALL" ]; then
-  for candidate in "$ROOT"/dsh-better-sidebar-*.tgz; do
-    if [ -f "$candidate" ]; then
-      TARBALL="$candidate"
-      break
-    fi
-  done
-fi
-if [ -z "$TARBALL" ]; then
-  say "未找到 tarball，执行 pnpm build && pnpm pack ..."
+  say "未提供 tarball，执行 pnpm build && pnpm pack ..."
   pnpm build
   pnpm pack --pack-destination "$SCRATCH" >/dev/null
   for candidate in "$SCRATCH"/dsh-better-sidebar-*.tgz; do
@@ -171,12 +177,24 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
-run_dsh web --port "$PORT" > "$WEB_LOG" 2>&1 &
-SERVER_PID=$!
+if [ "$DSH_MODE" = npx ]; then
+  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" npx -y --package "@deepseek-ai/dsh@0.1.0-rc.8" dsh web --port "$PORT" &
+else
+  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" "$DSH_CMD" web --port "$PORT" &
+fi
+LAUNCHER_PID=$!
 
 URL=""
 for _ in $(seq 1 120); do
-  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+  if [ -z "$SERVER_PID" ] && [ -f "$PID_FILE" ]; then
+    SERVER_PID="$(tr -d '\r\n' < "$PID_FILE")"
+  fi
+  if [ -z "$SERVER_PID" ] && ! kill -0 "$LAUNCHER_PID" 2>/dev/null; then
+    echo "=== dsh web 提前退出，日志尾部 ===" >&2
+    tail -30 "$WEB_LOG" >&2 || true
+    exit 1
+  fi
+  if [ -n "$SERVER_PID" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "=== dsh web 提前退出，日志尾部 ===" >&2
     tail -30 "$WEB_LOG" >&2 || true
     exit 1

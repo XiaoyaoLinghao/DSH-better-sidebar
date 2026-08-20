@@ -26,10 +26,12 @@ if [ ! -f lib/types/client/service.d.ts ]; then
   exit 1
 fi
 
-WORK="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' '.dsh-consumer-types.marker')"
+WORK_INFO="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.')"
+WORK="$(node -p "JSON.parse(process.argv[1]).scratch" "$WORK_INFO")"
+WORK_TOKEN="$(node -p "JSON.parse(process.argv[1]).token" "$WORK_INFO")"
 cleanup() {
   local code=$?
-  if ! node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' '.dsh-consumer-types.marker'; then
+  if ! node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' "$WORK_TOKEN"; then
     echo "[check-consumer-types] WARNING: scratch cleanup refused; preserving $WORK" >&2
   fi
   exit "$code"
@@ -37,7 +39,7 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$WORK/node_modules"
-node "$SAFE_TEMP" link "$ROOT" "$WORK/node_modules/dsh-better-sidebar"
+node "$SAFE_TEMP" link "$ROOT" "$WORK/node_modules/dsh-better-sidebar" "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' "$WORK_TOKEN"
 
 cat > "$WORK/check.ts" <<'EOF'
 import { SIDEBAR_FEATURES, SIDEBAR_SERVICE_VERSION } from 'dsh-better-sidebar/client/service'
