@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -208,7 +208,10 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('pnpm pack --pack-destination "$SCRATCH"')
     expect(script).toContain('node "$SAFE_TEMP" launch')
     expect(script).toContain('DSH_MODE=pnpm')
-    expect(script).toContain('pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh')
+    expect(script).toContain('pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" "$@"')
+    expect(script).toContain('pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" web --port "$PORT"')
+    expect(script).not.toContain('"@deepseek-ai/dsh@0.1.0-rc.8" dsh')
+    expect(script).toContain('DSH_MOUNT_PROBE=1')
     expect(script).toContain('DSH_CMD="${DSH_CMD-}"')
     expect(script).toContain('DSH_CMD 无效')
     expect(script).toContain('typeof value.quarantine !== "string"')
@@ -217,6 +220,30 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('@deepseek-ai/dsh@0.1.0-rc.8')
     expect(script).not.toContain('for candidate in "$ROOT"/dsh-better-sidebar-*.tgz')
     expect(readFileSync(resolve(process.cwd(), 'scripts/safe-temp.mjs'), 'utf8')).toContain('SIGKILL')
+  })
+
+  it('executes the pinned rc.8 bin directly and passes scoped build approvals', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-probe.'))
+    const fakeBin = join(sandbox, 'bin')
+    const capture = join(sandbox, 'argv.json')
+    mkdirSync(fakeBin)
+    const fakePnpm = join(fakeBin, 'pnpm')
+    writeFileSync(fakePnpm, '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(process.env.DSH_PROBE_CAPTURE, JSON.stringify(process.argv.slice(2))); if (process.argv.includes("--version")) process.stdout.write("0.1.0-rc.8\\n")\n')
+    chmodSync(fakePnpm, 0o755)
+    try {
+      const pathKey = process.platform === 'win32' ? ';' : ':'
+      const result = spawnSync('bash', [resolve(process.cwd(), 'scripts/e2e-mount.sh')], {
+        env: { ...process.env, DSH_MOUNT_PROBE: '1', DSH_PROBE_CAPTURE: capture, PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}` },
+        encoding: 'utf8',
+      })
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
+      expect(result.status, result.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual([
+        'dlx', '--allow-build=node-pty', '--allow-build=protobufjs', '@deepseek-ai/dsh@0.1.0-rc.8', '--version',
+      ])
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
   })
 
   it('keeps production remove immune to pause-hook environment variables', () => {

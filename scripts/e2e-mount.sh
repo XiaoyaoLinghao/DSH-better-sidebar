@@ -14,6 +14,7 @@
 #
 # 环境变量（均可省略）：
 #   DSH_CMD        可选的 dsh 命令覆盖；为空时固定使用 pnpm dlx 拉 rc8
+#   DSH_MOUNT_PROBE=1 仅供回归测试：解析默认 CLI 后执行 --version 并退出
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
@@ -53,11 +54,20 @@ fi
 
 run_dsh() {
   if [ "$DSH_MODE" = pnpm ]; then
-    pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh "$@"
+    # pnpm dlx executes the package's declared bin directly; the extra `dsh`
+    # token would be treated as a CLI subcommand and breaks `plugin add`.
+    # The build allow-list is scoped to this invocation so pnpm 11 never opens
+    # its interactive approve-builds prompt in a fresh dlx environment.
+    pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" "$@"
   else
     "$DSH_CMD" "$@"
   fi
 }
+
+if [ "${DSH_MOUNT_PROBE:-}" = "1" ]; then
+  run_dsh --version
+  exit $?
+fi
 
 # scratch home（每次全新，绝不触碰真实 ~/.dsh）：调用方给了 DSH_HOME_BASE
 # 时，只在其下新建本调用拥有的子目录并只隔离该子目录；缺省时直接用系统
@@ -180,7 +190,7 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
 if [ "$DSH_MODE" = pnpm ]; then
-  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh web --port "$PORT" &
+  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm dlx --allow-build=node-pty --allow-build=protobufjs "@deepseek-ai/dsh@0.1.0-rc.8" web --port "$PORT" &
 else
   node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" "$DSH_CMD" web --port "$PORT" &
 fi
