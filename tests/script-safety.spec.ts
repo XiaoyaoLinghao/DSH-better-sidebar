@@ -260,7 +260,9 @@ describe('verification script scratch safety', () => {
     const output = join(hostilePath, 'argv.json')
     const pidFile = join(hostilePath, 'shim.pid')
     const logFile = join(hostilePath, 'shim.log')
-    const expected = ['%NAME%', '%PATH%', 'caret^x', 'bang!x', 'paren(x)', 'angle<in>', 'angle>out', 'alpha&beta', 'semi;pipe|', 'quoted"arg']
+    const sentinel = join(sandbox, 'PWNED.txt')
+    const combined = `combo"& echo PWNED > "${sentinel}" & rem "z`
+    const expected = ['%NAME%', '%PATH%', 'caret^x', 'bang!x', 'paren(x)', 'angle<in>', 'angle>out', 'alpha&beta', 'semi;pipe|', 'quoted"arg', combined]
     writeFileSync(capture, 'import fs from "node:fs"; fs.writeFileSync(process.argv[2], JSON.stringify(process.argv.slice(4)))\n')
     writeFileSync(shim, `@echo off\r\nnode "%~dp0capture.mjs" "%~dp0argv.json" %*\r\n`)
     try {
@@ -268,6 +270,7 @@ describe('verification script scratch safety', () => {
       await new Promise<void>((resolve) => launcher.once('exit', () => resolve()))
       expect(launcher.exitCode).toBe(0)
       expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual(expected)
+      expect(existsSync(sentinel)).toBe(false)
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }

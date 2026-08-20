@@ -273,16 +273,32 @@ async function launch(pidFile, logFile, command, args) {
     ? (/(?:\.(?:cmd|bat))$/i.test(command) ? command : `${command}.cmd`)
     : null
   // Node cannot execute .cmd/.bat files directly. A private one-shot batch
-  // wrapper invokes the target with escaped literals and no CALL (CALL would
-  // trigger a second cmd expansion of the arguments).
+  // wrapper invokes the target through randomized environment variables. The
+  // wrapper source contains only variable names: values are expanded with
+  // delayed expansion after cmd has parsed operators, so untrusted arguments
+  // never become batch source.
   const executable = command
   let childArgs = args
-  const childEnv = process.env
+  const childEnv = { ...process.env }
   let wrapper
   if (batchCommand) {
     wrapper = path.join(path.dirname(log), `.dsh-launch-${crypto.randomBytes(16).toString('hex')}.cmd`)
-    const invocation = [quoteBatchLiteral(batchCommand), ...args.map(quoteBatchLiteral)].join(' ')
-    fs.writeFileSync(wrapper, `@echo off\r\n${invocation}\r\n`, { flag: 'wx', mode: 0o600 })
+    const envPrefix = `DSH_SAFE_TEMP_${crypto.randomBytes(16).toString('hex').toUpperCase()}`
+    const targetName = `${envPrefix}_TARGET`
+    const countName = `${envPrefix}_COUNT`
+    const argsName = `${envPrefix}_ARG_`
+    childEnv[targetName] = `"${batchCommand}"`
+    childEnv[countName] = String(args.length)
+    args.forEach((arg, index) => { childEnv[`${argsName}${index}`] = quoteWindowsArg(arg) })
+    const invocationName = `${envPrefix}_INVOCATION`
+    const lines = [
+      '@echo off',
+      'setlocal EnableDelayedExpansion',
+      `set "${invocationName}=!${targetName}!"`,
+      `for /l %%I in (0,1,!${countName}!-1) do set "${invocationName}=!${invocationName}! !${argsName}%%I!"`,
+      `!${invocationName}!`,
+    ]
+    fs.writeFileSync(wrapper, `${lines.join('\r\n')}\r\n`, { flag: 'wx', mode: 0o600 })
     childArgs = ['/d', '/c', `""${wrapper}""`]
   }
   const child = spawn(batchCommand ? (process.env.ComSpec || 'cmd.exe') : executable, childArgs, {
@@ -297,22 +313,24 @@ async function launch(pidFile, logFile, command, args) {
   await new Promise((resolve) => {
     child.once('error', (error) => {
       try { fs.unlinkSync(pid) } catch { /* already gone */ }
+      if (wrapper) try { fs.unlinkSync(wrapper) } catch { /* already gone */ }
       console.error(`[safe-temp] child failed: ${error.message}`)
       resolve()
       process.exitCode = 1
     })
     child.once('exit', (code, signal) => {
       try { fs.unlinkSync(pid) } catch { /* already gone */ }
+      if (wrapper) try { fs.unlinkSync(wrapper) } catch { /* already gone */ }
       process.exitCode = code ?? (signal ? 1 : 0)
       resolve()
     })
   })
 }
 
-function quoteBatchLiteral(value) {
+function quoteWindowsArg(value) {
   const text = String(value)
   if (/[\0\r\n]/.test(text)) fail('batch command arguments cannot contain NUL or newlines')
-  return `"${text.replace(/%/g, '%%').replace(/"/g, '"^"')}"`
+  return `"${text.replace(/\^/g, '^^').replace(/!/g, '^!').replace(/[&|<>]/g, '^$&').replace(/"/g, '"^"')}"`
 }
 
 function terminate(pidArg) {
