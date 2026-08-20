@@ -357,6 +357,25 @@ ctx.effect(() => {
 | `browser` | 50 | 否（createTab 铸造 browser:`<n>`，nextBrowser 自增） | 否 | 内嵌网页浏览器（沙箱 iframe；可设置关闭沙箱） |
 | `diff` | -1 | 否（按 id 去重） | 是 | 差异查看（由 GitView 触发） |
 
+### 3.5 原生 Sidechain 命令与配置
+
+DSH rc.8 的 better-sidebar 内置 Sidechain Tab 与 `/side`、`/btw`、`/side list` 命令共用同一安装包：
+
+- `/side <问题>` 创建可继续的 child conversation；`/btw <问题>` 创建一次性、只读 child；两者都要求非空问题。
+- `fork` 是 DSH subagent provider 的语义：从父会话已完成历史创建 child conversation snapshot，**不是 Git fork**。Sidechain 只看当前父会话的直接 child；Subagent Tab 负责完整拓扑、后台任务和跳转到其他会话。
+- Side card 的 Sidechain 开关只影响 Tab 可见性与自动打开，不注销 host 命令；`/btw` 永远只读，`/side` 可在 Tab 内继续。
+
+host 配置采用嵌套 YAML（`providerName` 缺省为 `fork`；`readOnlyTools` 未设置时不增加 allow-list 限制）：
+
+```yaml
+config:
+  sidechain:
+    providerName: fork
+    readOnlyTools: [read, grep, glob]
+```
+
+本模块仅支持 DSH `0.1.0-rc.8`。参考 `dsh-sidechain` 改编的源文件保留 provenance 注释，发布包的 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES) 含完整 BSD-3-Clause 版权、三项条件与免责声明；不要把参考项目贡献者表示为本项目背书者。
+
 你的 `id` 不可与上述重复，否则 `registerTab` 抛 `"tab type \"X\" already registered"`。
 
 ---

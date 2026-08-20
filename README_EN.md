@@ -60,6 +60,27 @@
 - 🧩 **Chunk revalidation barrier hardening** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): HEAD revalidation gains a 5s timeout (fails open on a stuck route so the barrier can never wedge lazy loads); `resetChunks` clears a pending revalidation barrier
 - 🖱️ **Drag robustness** ([#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)): fast releases (browsers merge/lose pointermove bursts) commit the last known dragged position instead of rolling back; `pointercancel` / lost-capture interruptions keep the drag result too; the center column is re-measured right after commit (no mid-frame bottom-panel width jump); HMR re-activation re-locates the center column via an `<html>` style observer plus a retry when the bottom panel opens (fixes the blank bottom panel / shifted input bar after a hot reload)
 
+### Native Sidechain (`/side` / `/btw`)
+
+This release integrates side conversations as one normal, localizable, disableable, session-persisted sidebar tab. The command semantics are:
+
+- `/side <question>` starts a continuable child conversation; read its transcript in the Sidechain tab and send follow-up prompts inline.
+- `/btw <question>` starts a one-shot child conversation; its transcript is explicitly read-only and has no composer.
+- `/side list` lists the direct children of the current parent session.
+
+Both commands require a non-empty question. Host configuration is nested YAML; `providerName: fork` uses the DSH fork provider to create a child conversation from completed parent history. **It does not mean a Git fork**:
+
+```yaml
+config:
+  sidechain:
+    providerName: fork
+    readOnlyTools: [read, grep, glob]
+```
+
+Sidechain shows direct children of the current parent and owns inline `/side` continuation. The Subagent tab remains the place for the complete child tree, background jobs, and navigation into another DSH session; they are intentionally distinct. The Sidechain switch lives in Settings → Side card; disabling it hides the tab and auto-open behavior without unregistering the commands.
+
+The compatibility baseline is DSH `0.1.0-rc.8` (rc.7 and earlier are unsupported). Code adapted from the `dsh-sidechain` reference is shipped with its BSD-3-Clause copyright, conditions, and disclaimer in [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES).
+
 ### v0.13.1### v0.13.1
 
 **✨ New features**

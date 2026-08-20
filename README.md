@@ -61,6 +61,27 @@
 - 🧩 **chunk 重验证屏障健壮性**（[#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)）：HEAD 重验证加 5s 超时兜底（路由挂起时 fail-open 重取，屏障不再可能无限期阻塞懒加载）；`resetChunks` 清挂起的重验证屏障
 - 🖱️ **拖拽健壮性**（[#232](https://github.com/omdsh-dev/DSH-better-sidebar/pull/232)）：快速释放（浏览器合并 / 丢失 pointermove 突发）时提交最后已知拖动位置而非回退；`pointercancel` / 捕获丢失中断同样保留拖动结果；提交后立即重测中心列（消除底栏宽度中间帧抖动）；HMR 重激活后中心列重定位兜底（`<html>` 样式观察 + 底栏打开重测），修复热更新后底栏空白 / 输入框位移
 
+### 原生 Sidechain（`/side` / `/btw`）
+
+本版把侧会话作为一个普通的可本地化、可禁用、按会话持久化的侧边栏 Tab 集成。命令语义如下：
+
+- `/side <问题>` 创建可继续的侧会话；结果在 Sidechain Tab 内查看，可在底部继续提问。
+- `/btw <问题>` 创建一次性侧会话；结果在 Sidechain Tab 内查看，明确为只读，不提供继续输入。
+- `/side list` 列出当前主会话的直接子会话。
+
+两条命令都要求非空问题。配置使用 host 的嵌套 YAML；`providerName: fork` 指通过 DSH fork provider 从已完成的父会话历史创建子会话，**不是 Git fork**：
+
+```yaml
+config:
+  sidechain:
+    providerName: fork
+    readOnlyTools: [read, grep, glob]
+```
+
+Sidechain 只展示当前父会话的直接子会话并支持 `/side` 的内联继续；Subagent Tab 仍负责完整子代理树、后台任务与跳转到其他 DSH 会话，两者不是同一视图。Sidechain 的开关位于设置页「侧边卡片」，关闭只隐藏 Tab / 自动打开，不会注销命令。
+
+兼容基线为 DSH `0.1.0-rc.8`（rc.7 及更早版本不受支持）。Sidechain 参考实现中的代码改编自 `dsh-sidechain`，其 BSD-3-Clause 版权、条件与免责声明随包发布于 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES)。
+
 ### v0.13.1
 
 **✨ 新功能**

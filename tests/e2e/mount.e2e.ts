@@ -56,7 +56,7 @@ const SEEDED_MD_FILE = 'diagram.md'
 const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
-const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser']
+const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser', 'Sidechain']
 
 let api: APIRequestContext
 
@@ -99,6 +99,30 @@ async function seedSession(): Promise<void> {
     data: { type: 'client-request', rpcId: 'e2e-session', method: 'session.create', payload: { workspaceId } },
   })
   expect(session.ok(), `session.create: ${session.status()} ${await session.text()}`).toBe(true)
+}
+
+/** Toggle the native Sidechain descriptor through the same settings route
+ * used by the Side card. The real mount lane has no model key, so availability
+ * is verified through the deterministic + menu inventory instead. */
+async function setSidechainEnabled(enabled: boolean): Promise<void> {
+  const read = await api.post(`${BASE_URL}/sidebar/api/settings.get`, { data: {} })
+  expect(read.ok(), `settings.get: ${read.status()} ${await read.text()}`).toBe(true)
+  const view = (await read.json()) as {
+    ok: true
+    value: { value?: Record<string, unknown>; revision?: number }
+  }
+  expect(view.ok).toBe(true)
+  const current = view.value.value ?? {}
+  const tabsEnabled = current.tabsEnabled !== null && typeof current.tabsEnabled === 'object'
+    ? current.tabsEnabled as Record<string, unknown>
+    : {}
+  const write = await api.post(`${BASE_URL}/sidebar/api/settings.update`, {
+    data: {
+      patch: { tabsEnabled: { ...tabsEnabled, sidechain: enabled } },
+      ...(typeof view.value.revision === 'number' ? { expectedRevision: view.value.revision } : {}),
+    },
+  })
+  expect(write.ok(), `settings.update: ${write.status()} ${await write.text()}`).toBe(true)
 }
 
 test.beforeAll(async () => {
@@ -191,6 +215,12 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     ), { timeout: 90_000 })
     .not.toBe('')
 
+  // Sidechain is a normal tab surface. Exactly one plugin root and no legacy
+  // header/floating-panel ownership are part of the native integration seam.
+  await expect(sidebar).toHaveCount(1)
+  await expect(sidebar.locator('[data-sidechain-session-header-toggle]')).toHaveCount(0)
+  await expect(sidebar.locator('aside')).toHaveCount(0)
+
   // Crash-marker assertions shared by every step.
   const assertNoCrash = async (): Promise<void> => {
     await expect
@@ -227,6 +257,55 @@ test('plugin mounts into the DSH shell and survives a built-in tab sweep', async
     await page.waitForTimeout(1_500)
     await assertNoCrash()
   }
+
+  // The Side card's enable switch gates the + inventory but does not remove an
+  // already-open tab. Toggle it off through the persisted settings seam, then
+  // reload and prove the add action disappears; restore it and prove it returns.
+  await setSidechainEnabled(false)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })
+  const disabledNewTab = page.locator('[data-dsh-better-sidebar]').getByRole('button', { name: 'New tab' }).first()
+  await disabledNewTab.click()
+  await expect(page.getByRole('menuitem', { name: 'Sidechain' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
+
+  await setSidechainEnabled(true)
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  const restoredSidebar = page.locator('[data-dsh-better-sidebar]')
+  await expect(restoredSidebar).toHaveCount(1, { timeout: 90_000 })
+  const restoredNewTab = restoredSidebar.getByRole('button', { name: 'New tab' }).first()
+  await restoredNewTab.click()
+  await expect(page.getByRole('menuitem', { name: 'Sidechain' })).toHaveCount(1)
+  await page.keyboard.press('Escape')
+
+  // Exercise the persisted tab-meta contract without needing a model-backed
+  // child: inject the canonical v1 metadata into the real session state,
+  // reload, and require hydration to recover safely to the list view.
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find(item => item.startsWith('dsh-sidebar:v1:'))
+    if (key === undefined) throw new Error('mount lane could not find the session sidebar state')
+    const state = JSON.parse(localStorage.getItem(key) ?? 'null') as { splits?: unknown; bottomSplits?: unknown }
+    const visit = (node: unknown): void => {
+      if (node === null || typeof node !== 'object') return
+      const record = node as { kind?: unknown; tabs?: unknown; children?: unknown }
+      if (record.kind === 'leaf' && Array.isArray(record.tabs)) {
+        const tabs = record.tabs as Array<Record<string, unknown>>
+        const sidechain = tabs.find(tab => tab.type === 'sidechain')
+        if (sidechain !== undefined) sidechain.meta = { version: 1, selectedChildId: 'mount-missing-child' }
+        for (const tab of tabs) {
+          if (tab.type === 'sidechain') tab.meta = { version: 1, selectedChildId: 'mount-missing-child' }
+        }
+      }
+      if (Array.isArray(record.children)) for (const child of record.children) visit(child)
+    }
+    visit(state.splits)
+    visit(state.bottomSplits)
+    localStorage.setItem(key, JSON.stringify(state))
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await expect(page.locator('[data-dsh-better-sidebar]')).toHaveCount(1, { timeout: 90_000 })
+  await expect(page.locator('[data-sidechain-view]')).toHaveCount(1, { timeout: 90_000 })
+  await assertNoCrash()
 
   // The editor chunk (client-editor.js) only loads when a files-window tab
   // renders. Exercise the file-open path explicitly through the Files window's
