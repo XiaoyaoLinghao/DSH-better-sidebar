@@ -358,8 +358,8 @@ export function Sidebar(props: { ctx: Context; store: SidebarStore; controller?:
    * Job auto-activation: the moment a NEW background job appears for the
    * current conversation (a job id the previous snapshot lacked), the
    * auto-open pref is on, and the Jobs tab type is enabled, open the panel
-   * (if collapsed) and focus the Jobs page. Unlike the subagent trigger
-   * (0 → N only), ANY new job id triggers: the agent may start several
+   * (if collapsed) and focus the Jobs page. Unlike the child-ID trigger,
+   * ANY new job id triggers: the agent may start several
    * jobs in one session, and each should surface. A fresh page load never
    * triggers — its baseline starts at the current snapshot.
    */

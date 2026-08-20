@@ -33,7 +33,7 @@ describe('subagent detection over the sessions list feed', () => {
     expect(directSubagentCount(snapshot.byId, 'p1-nobody')).toBe(0)
   })
 
-  it('fires only on the 0 → N transition of the current session', () => {
+  it('returns exact newly appeared direct child IDs for the current session', () => {
     const empty = list('p1', [])
     const one = list('p1', ['c1'])
     const two = list('p1', ['c1', 'c2'])

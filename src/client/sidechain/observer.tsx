@@ -44,12 +44,12 @@ export function observeCreatedChildren(
   for (const node of nodes) {
     if (node.name !== 'side' && node.name !== 'btw') continue
     const child = resolveChildSessionId(node, node.name)
-    if (
-      previous !== undefined
-      && node.time >= startedAt
-      && child !== undefined
-      && previous.get(node.commandId) !== child
-    ) children.push(child)
+    const previouslyKnown = previous?.has(node.commandId) === true
+    const previousChild = previous?.get(node.commandId)
+    const pendingSettlement = previouslyKnown && previousChild === undefined && child !== undefined
+    const liveSettlement = previous !== undefined && previousChild !== child
+      && child !== undefined && node.time >= startedAt
+    if (pendingSettlement || liveSettlement) children.push(child)
     known.set(node.commandId, child)
   }
   return { known, children }
@@ -73,24 +73,27 @@ export function SidechainCommandObserver({
 }: SidechainCommandObserverProps): null {
   const session = useSession(snapshot => snapshot)
   const stateRef = useRef<ObservationState | undefined>(undefined)
-  const freshSession = stateRef.current?.sessionId !== session.sessionId
-  if (freshSession) {
-    stateRef.current = { sessionId: session.sessionId, startedAt: Date.now(), known: new Map() }
-  }
-  const state = stateRef.current!
-  const commandNodes = session.nodes.filter((node): node is CommandNode => node.kind === 'command')
-  const observed = observeCreatedChildren(freshSession ? undefined : state.known, commandNodes, state.startedAt)
-  state.known = observed.known
-
   useEffect(() => {
-    controller.resetSession(session.sessionId)
-  }, [controller, session.sessionId])
-
-  useEffect(() => {
+    const previous = stateRef.current
+    const sameSession = previous?.sessionId === session.sessionId
+    if (!sameSession) {
+      if (previous !== undefined) controller.resetSession(previous.sessionId)
+      controller.resetSession(session.sessionId)
+    }
+    const startedAt = sameSession ? previous.startedAt : Date.now()
+    const commandNodes = session.nodes.filter((node): node is CommandNode => node.kind === 'command')
+    const observed = observeCreatedChildren(
+      sameSession ? previous.known : undefined,
+      commandNodes,
+      startedAt,
+    )
+    // This is intentionally committed state: a discarded/concurrent render
+    // must not consume a command before React has committed the snapshot.
+    stateRef.current = { sessionId: session.sessionId, startedAt, known: observed.known }
     for (const childId of observed.children) {
       controller.claimSideChild(session.sessionId, childId)
     }
-  }, [controller, observed.children, session.sessionId])
+  }, [controller, session])
 
   return null
 }
