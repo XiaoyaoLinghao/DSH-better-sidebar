@@ -15,6 +15,8 @@
 # 环境变量（均可省略）：
 #   DSH_CMD        可选的 dsh 命令覆盖；为空时固定使用 pnpm dlx 拉 rc8
 #   --probe-default-cli 仅供回归测试：解析默认 CLI 后执行 --version 并退出
+#   --probe-e2e-mode 仅供回归测试：在不创建 scratch/启动 DSH 的情况下，
+#                    通过 Playwright 命令边界捕获 onboarding 模式并退出
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
@@ -86,6 +88,16 @@ run_dsh() {
 
 if [ "${1:-}" = "--probe-default-cli" ]; then
   run_dsh --version
+  exit $?
+fi
+
+if [ "${1:-}" = "--probe-e2e-mode" ]; then
+  [ -n "${DSH_PROBE_CAPTURE:-}" ] || die "DSH_PROBE_CAPTURE 未设置"
+  # The fake pnpm used by the safety test stands in for the Playwright
+  # boundary. This branch intentionally runs before scratch/profile setup so
+  # it cannot install packages, contact the network, or touch a user home.
+  DSH_E2E_EXPECT_ONBOARDING="$E2E_ONBOARDING_EXPECTED" \
+    pnpm exec playwright test --probe-e2e-mode
   exit $?
 fi
 

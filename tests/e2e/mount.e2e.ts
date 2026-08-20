@@ -65,6 +65,8 @@ const EXPECT_ONBOARDING_TAKEOVER = process.env.DSH_E2E_EXPECT_ONBOARDING === '1'
 const ONBOARDING_SHELL_WAIT_MS = 10_000
 const ONBOARDING_TAKEOVER_GRACE_MS = 2_000
 const ONBOARDING_EXPECTED_WAIT_MS = 60_000
+const ONBOARDING_TAKEOVER_BUTTON_RE = /^(Continue|Configure later|继续|稍后配置)$/
+const ONBOARDING_TAKEOVER_BUTTON_NAMES = ['Continue', 'Configure later', '继续', '稍后配置'] as const
 
 let api: APIRequestContext
 
@@ -128,7 +130,7 @@ async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
 /** Dismiss keyless DSH onboarding takeovers; the provider dialog reappears
  * after every reload while no credential is configured. */
 async function dismissOnboarding(page: Page): Promise<void> {
-  const takeover = page.getByRole('button', { name: /^(Continue|Configure later)$/ })
+  const takeover = page.getByRole('button', { name: ONBOARDING_TAKEOVER_BUTTON_RE })
   const shellReady = page.locator('button:has([data-slot="settings.trigger"])')
   if (EXPECT_ONBOARDING_TAKEOVER) {
     // In the default rc.8 keyless lane, absence is a real failure rather than
@@ -163,7 +165,7 @@ async function dismissOnboarding(page: Page): Promise<void> {
   for (let round = 0; round < 8; round++) {
     let foundCandidate = false
     let dismissed = false
-    for (const name of ['Continue', 'Configure later']) {
+    for (const name of ONBOARDING_TAKEOVER_BUTTON_NAMES) {
       const button = page.getByRole('button', { name, exact: true }).first()
       if ((await button.count()) === 0) continue
       foundCandidate = true

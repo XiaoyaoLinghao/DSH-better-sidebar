@@ -241,6 +241,57 @@ describe('verification script scratch safety', () => {
     expect(script).not.toContain('DSH_E2E_EXPECT_ONBOARDING=${DSH_E2E_EXPECT_ONBOARDING')
   })
 
+  it('passes runner-selected onboarding mode through the Playwright boundary', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-mode-probe.'))
+    const fakeBin = join(sandbox, 'bin')
+    const capture = join(sandbox, 'mode.json')
+    mkdirSync(fakeBin)
+    const fakePnpm = join(fakeBin, 'pnpm')
+    const fakeDsh = join(fakeBin, 'fake-dsh')
+    writeFileSync(fakePnpm, '#!/usr/bin/env node\nconst fs = require("node:fs"); fs.writeFileSync(process.env.DSH_PROBE_CAPTURE, JSON.stringify({ argv: process.argv.slice(2), onboarding: process.env.DSH_E2E_EXPECT_ONBOARDING }));\n')
+    writeFileSync(fakeDsh, '#!/usr/bin/env node\nprocess.exit(0)\n')
+    chmodSync(fakePnpm, 0o755)
+    chmodSync(fakeDsh, 0o755)
+    try {
+      const pathKey = process.platform === 'win32' ? ';' : ':'
+      const script = resolve(process.cwd(), 'scripts/e2e-mount.sh')
+      const defaultProbe = spawnSync('bash', [script, '--probe-e2e-mode'], {
+        env: {
+          ...process.env,
+          DSH_CMD: '',
+          DSH_E2E_EXPECT_ONBOARDING: '0',
+          DSH_PROBE_CAPTURE: capture,
+          PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}`,
+        },
+        encoding: 'utf8',
+      })
+      if ((defaultProbe.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
+      expect(defaultProbe.status, defaultProbe.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({
+        argv: ['exec', 'playwright', 'test', '--probe-e2e-mode'],
+        onboarding: '1',
+      })
+
+      const overrideProbe = spawnSync('bash', [script, '--probe-e2e-mode'], {
+        env: {
+          ...process.env,
+          DSH_CMD: 'fake-dsh',
+          DSH_E2E_EXPECT_ONBOARDING: '1',
+          DSH_PROBE_CAPTURE: capture,
+          PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}`,
+        },
+        encoding: 'utf8',
+      })
+      expect(overrideProbe.status, overrideProbe.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toEqual({
+        argv: ['exec', 'playwright', 'test', '--probe-e2e-mode'],
+        onboarding: '0',
+      })
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   it('executes the pinned rc.8 bin directly and passes scoped build approvals', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-probe.'))
     const fakeBin = join(sandbox, 'bin')
