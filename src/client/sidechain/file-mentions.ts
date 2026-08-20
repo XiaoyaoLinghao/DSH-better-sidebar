@@ -21,8 +21,9 @@ function resolveAgainstCwd(cwd: string | undefined, path: string): string {
   if (path.startsWith('/') || /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\')) return path
   if (cwd === undefined || cwd === '') return path
   const base = cwd.replace(/[/\\]+$/, '')
-  const relative = path.replace(/^[/\\]+/, '')
-  return `${base}/${relative}`
+  const separator = cwd.includes('\\') ? '\\' : '/'
+  const relative = path.replace(/^[/\\]+/, '').replace(/[\\/]/g, separator)
+  return `${base}${separator}${relative}`
 }
 
 /** Return the only produced path with this basename, or undefined if ambiguous. */
@@ -52,10 +53,11 @@ export function fileMentionsFor(
 
   return {
     resolve(value) {
+      const normalizedValue = normalizeSeparators(value)
       const path = byAbsolute.has(value)
         ? value
-        : byCwdRelative.has(value)
-          ? value
+        : byCwdRelative.has(normalizedValue)
+          ? normalizedValue
           : onlyPathWithBasename(produced, value)
       if (path === undefined) return undefined
 
@@ -74,7 +76,14 @@ export function fileMentionsFor(
 /** Return a produced path relative to cwd when it is contained by cwd. */
 function relativeTo(cwd: string | undefined, path: string): string | undefined {
   if (cwd === undefined || cwd === '') return undefined
-  const base = cwd.replace(/[/\\]+$/, '') + '/'
-  if (!path.startsWith(base)) return undefined
-  return path.slice(base.length)
+  const base = normalizeSeparators(cwd).replace(/\/+$/, '')
+  const normalizedPath = normalizeSeparators(path)
+  const prefix = `${base.toLowerCase()}/`
+  if (!normalizedPath.toLowerCase().startsWith(prefix)) return undefined
+  return normalizedPath.slice(base.length + 1)
+}
+
+/** Compare paths lexically across POSIX/Windows separator spellings. */
+function normalizeSeparators(path: string): string {
+  return path.replace(/\\/g, '/')
 }

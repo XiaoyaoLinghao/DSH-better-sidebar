@@ -63,4 +63,32 @@ describe('fileMentionsFor', () => {
     mentions.resolve('file.ts')!.open()
     expect(openFile).toHaveBeenCalledWith('C:\\repo\\file.ts')
   })
+
+  it('resolves cwd-relative mentions under a drive-letter cwd', () => {
+    const openFile = vi.fn()
+    const mentions = fileMentionsFor(
+      ['C:\\repo\\src\\a.ts'],
+      'C:\\repo',
+      openFile,
+    )
+
+    const mention = mentions.resolve('src/a.ts')
+    expect(mention).not.toBeUndefined()
+    mention!.open()
+    expect(openFile).toHaveBeenCalledWith('C:\\repo\\src\\a.ts')
+  })
+
+  it('resolves cwd-relative mentions under a UNC cwd', () => {
+    const openFile = vi.fn()
+    const mentions = fileMentionsFor(
+      ['\\\\server\\share\\repo\\src\\a.ts'],
+      '\\\\server\\share\\repo',
+      openFile,
+    )
+
+    const mention = mentions.resolve('src\\a.ts')
+    expect(mention).not.toBeUndefined()
+    mention!.open()
+    expect(openFile).toHaveBeenCalledWith('\\\\server\\share\\repo\\src\\a.ts')
+  })
 })
