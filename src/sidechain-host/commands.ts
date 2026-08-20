@@ -1,4 +1,8 @@
 /**
+ * Portions of this file are adapted from @dsh-external/dsh-sidechain,
+ * Copyright (c) 2026, dsh-external contributors, under the BSD-3-Clause
+ * License. See THIRD_PARTY_NOTICES for the complete notice.
+ *
  * Command definitions for `/side` and `/btw`.
  *
  * Both commands fork the current session and return a client-observable
