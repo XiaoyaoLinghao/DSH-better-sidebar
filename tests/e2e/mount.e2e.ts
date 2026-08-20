@@ -29,7 +29,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
+import { errors, test, expect, request, type APIRequestContext, type Page } from '@playwright/test'
 
 const BASE_URL = process.env.DSH_E2E_URL
 if (!BASE_URL) {
@@ -120,28 +120,38 @@ async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
 /** Dismiss keyless DSH onboarding takeovers; the provider dialog reappears
  * after every reload while no credential is configured. */
 async function dismissOnboarding(page: Page): Promise<void> {
+  const takeover = page.getByRole('button', { name: /^(Continue|Configure later)$/ })
   try {
     await expect
-      .poll(() => page.getByRole('button', { name: /^(Continue|Configure later)$/ }).count(), { timeout: 60_000 })
+      .poll(() => takeover.count(), { timeout: 60_000 })
       .toBeGreaterThan(0)
   } catch {
     console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
   }
+  let lastClickError: unknown
   for (let round = 0; round < 8; round++) {
+    let foundCandidate = false
     let dismissed = false
     for (const name of ['Continue', 'Configure later']) {
       const button = page.getByRole('button', { name, exact: true }).first()
       if ((await button.count()) === 0) continue
+      foundCandidate = true
       try {
         await button.click({ timeout: 4_000 })
         dismissed = true
         await page.waitForTimeout(1_000)
-      } catch {
+      } catch (error) {
+        if (!(error instanceof errors.TimeoutError)) throw error
+        lastClickError = error
         // Masked by the takeover stacked above it; the next round retries.
       }
     }
-    if (!dismissed) break
+    if (!foundCandidate) break
+    if (!dismissed && round === 7) {
+      throw lastClickError ?? new Error('onboarding takeover remained but could not be dismissed')
+    }
   }
+  await expect(takeover, 'all keyless onboarding takeovers must be dismissed before shell interaction').toHaveCount(0, { timeout: 10_000 })
 }
 
 /** Close the native Settings dialog after exercising its real controls. */
