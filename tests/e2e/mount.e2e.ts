@@ -58,6 +58,9 @@ const CRASH_STRIP_PATTERNS = [/^dsh-better-sidebar:/, /^\[dsh-better-sidebar\]/]
 /** Built-in tab titles the sweep drives (en-US copy; follows DSH locale). */
 const BUILTIN_TABS = ['Files', 'Source Control', 'Tasks', 'Terminal', 'Browser', 'Sidechain']
 
+const ONBOARDING_SHELL_WAIT_MS = 10_000
+const ONBOARDING_TAKEOVER_GRACE_MS = 2_000
+
 let api: APIRequestContext
 
 /** Seed one workspace + one session (plus files for the editor/mermaid-chunk
@@ -121,11 +124,25 @@ async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
  * after every reload while no credential is configured. */
 async function dismissOnboarding(page: Page): Promise<void> {
   const takeover = page.getByRole('button', { name: /^(Continue|Configure later)$/ })
-  try {
-    await expect
-      .poll(() => takeover.count(), { timeout: 60_000 })
-      .toBeGreaterThan(0)
-  } catch {
+  const shellReady = page.locator('button:has([data-slot="settings.trigger"])')
+  const waitStarted = Date.now()
+  let shellReadySeen = false
+  while (Date.now() - waitStarted < ONBOARDING_SHELL_WAIT_MS) {
+    if ((await takeover.count()) > 0) break
+    shellReadySeen = (await shellReady.count()) > 0
+    if (shellReadySeen) {
+      const graceStarted = Date.now()
+      while (Date.now() - graceStarted < ONBOARDING_TAKEOVER_GRACE_MS && (await takeover.count()) === 0) {
+        await page.waitForTimeout(100)
+      }
+      break
+    }
+    await page.waitForTimeout(100)
+  }
+  if (!shellReadySeen && (await takeover.count()) === 0) {
+    throw new Error(`DSH shell did not expose Settings or onboarding within ${ONBOARDING_SHELL_WAIT_MS}ms`)
+  }
+  if ((await takeover.count()) === 0) {
     console.warn('[e2e] no onboarding takeover appeared; proceeding without dismissal')
   }
   let lastClickError: unknown
