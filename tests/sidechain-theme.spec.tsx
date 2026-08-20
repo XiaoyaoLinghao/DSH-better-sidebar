@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import userEvent from '@testing-library/user-event'
+import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { resolve } from 'node:path'
 import { createElement, type ReactNode } from 'react'
 import { act } from 'react-dom/test-utils'
 import { createRoot, type Root } from 'react-dom/client'
@@ -26,16 +28,30 @@ interface ThemeTokens {
   dark: Map<string, string>
 }
 
+interface OfficialThemePackage {
+  version: string
+  clientPath: string
+}
+
+function officialThemePackage(): OfficialThemePackage {
+  const rootRequire = createRequire(import.meta.url)
+  // The theme package is a host-side peer of this directly installed rc.8
+  // official UI package. Resolve through its public package exports instead
+  // of depending on pnpm's private store layout.
+  const conversationPackage = rootRequire.resolve('@deepseek-ai/dsh-client-ui-conversation/package.json')
+  const officialRequire = createRequire(conversationPackage)
+  const packageJsonPath = officialRequire.resolve('@deepseek-ai/dsh-client-ui-theme/package.json')
+  const manifest = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { version?: unknown }
+  const clientPath = officialRequire.resolve('@deepseek-ai/dsh-client-ui-theme/client')
+  if (typeof manifest.version !== 'string') throw new Error('official rc.8 theme package has no version')
+  return { version: manifest.version, clientPath }
+}
+
+const OFFICIAL_THEME_PACKAGE = officialThemePackage()
+const SIDECHAIN_CSS = readFileSync(resolve('src/client/sidechain/SidechainView.module.css'), 'utf8')
+
 function installedThemeCss(): string {
-  const pnpmRoot = resolve('node_modules/.pnpm')
-  const packageDir = readdirSync(pnpmRoot).find(name => {
-    if (!name.startsWith('@deepseek-ai+dsh-client-ui-')) return false
-    return existsSync(join(pnpmRoot, name, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js'))
-  })
-  if (packageDir === undefined) throw new Error('rc.8 dsh-client-ui-theme is not installed')
-  const source = readFileSync(join(
-    pnpmRoot, packageDir, 'node_modules/@deepseek-ai/dsh-client-ui-theme/lib/client.js',
-  ), 'utf8')
+  const source = readFileSync(OFFICIAL_THEME_PACKAGE.clientPath, 'utf8')
   const encoded = [...source.matchAll(/var \w+_css_default = "((?:\\.|[^"])*)";/g)].map(match => match[1]!)
   if (encoded.length === 0) throw new Error('installed rc.8 theme CSS was not found')
   return encoded.map(value => JSON.parse(`"${value}"`) as string).join('\n')
@@ -65,8 +81,7 @@ function parseThemeTokens(): ThemeTokens {
 const THEME_TOKENS = parseThemeTokens()
 
 function sidechainCssReferences(): readonly string[] {
-  const css = readFileSync(resolve('src/client/sidechain/SidechainView.module.css'), 'utf8')
-  return [...css.matchAll(/var\((--dsw-[\w-]+)/g)].map(match => match[1]!)
+  return [...SIDECHAIN_CSS.matchAll(/var\((--dsw-[\w-]+)/g)].map(match => match[1]!)
 }
 
 function resolveThemeToken(name: string, tokens: Map<string, string>, seen = new Set<string>()): string {
@@ -82,21 +97,25 @@ function applyThemeTokens(target: HTMLElement, theme: Theme): void {
   for (const [name, value] of THEME_TOKENS[theme]) target.style.setProperty(name, value)
 }
 
-function assertThemePaint(element: HTMLElement, property: string, token: string, theme: Theme): void {
-  const expected = resolveThemeToken(token, THEME_TOKENS[theme]).trim().toLowerCase()
-  expect(expected).not.toBe('transparent')
-  expect(expected).not.toBe('#0000')
-  const actual = getComputedStyle(element).getPropertyValue(property).trim().toLowerCase()
-  // jsdom currently leaves custom-property var() paints unresolved. In that
-  // case the parsed rc.8 contract above is the assertion; when it resolves,
-  // also reject an inert computed paint.
-  const unresolved = actual === '' || actual.includes('var(')
-    || (actual === 'rgb(0, 0, 0)' && expected !== '#000' && expected !== '#000000')
-    || actual === 'rgba(0, 0, 0, 0)'
-  if (!unresolved) {
-    expect(actual).not.toBe('transparent')
-    expect(actual).not.toBe('rgba(0, 0, 0, 0)')
-  }
+function cssDeclaration(selector: string, property: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const blocks = [...SIDECHAIN_CSS.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))]
+  const declaration = blocks.flatMap(match => match[1]!.split(';').map(part => part.trim()))
+    .find(part => part.startsWith(`${property}:`))
+  if (blocks.length === 0) throw new Error(`Sidechain CSS selector ${selector} is missing`)
+  if (declaration === undefined) throw new Error(`${selector} has no ${property} declaration`)
+  return declaration.slice(property.length + 1).trim()
+}
+
+function assertStylePaint(selector: string, property: string, token: string, theme: Theme): void {
+  const expectedPaint = resolveThemeToken(token, THEME_TOKENS[theme]).trim().toLowerCase()
+  const declaration = cssDeclaration(selector, property).toLowerCase()
+  const resolved = declaration.replace(/var\((--dsw-[\w-]+)\)/g, (_match, reference: string) =>
+    resolveThemeToken(reference, THEME_TOKENS[theme]).trim().toLowerCase())
+  const expected = property.startsWith('border') ? `1px solid ${expectedPaint}` : expectedPaint
+  expect(resolved, `${selector} ${property} ${theme} style contract`).toBe(expected)
+  expect(resolved).not.toContain('var(')
+  expect(resolved).not.toContain('transparent')
 }
 
 function mount(node: ReactNode): { container: HTMLDivElement; root: Root; rerender: (next: ReactNode) => void } {
@@ -142,16 +161,6 @@ function transcript(rows: readonly TranscriptRow[] = [], produced: readonly stri
 
 function keyboardReachable(element: HTMLElement): boolean {
   return !element.hasAttribute('disabled') && element.tabIndex >= 0
-}
-
-function keyboardActivate(element: HTMLElement, key: 'Enter' | ' '): void {
-  element.focus()
-  expect(document.activeElement).toBe(element)
-  element.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
-  element.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }))
-  // jsdom does not synthesize the native button click from Enter/Space; this
-  // final activation mirrors that browser default after the real key events.
-  element.click()
 }
 
 function assertNormalGeometry(view: HTMLElement): void {
@@ -234,6 +243,7 @@ describe('native Sidechain theme and accessibility guard', () => {
   afterEach(() => { vi.useRealTimers(); document.body.innerHTML = '' })
 
   it('defines every Sidechain CSS theme token in both installed rc.8 modes', () => {
+    expect(OFFICIAL_THEME_PACKAGE.version).toBe('0.1.0-rc.8')
     const references = [...new Set(sidechainCssReferences())]
     expect(references).not.toContain('--dsw-alias-line-light')
     for (const reference of references) {
@@ -253,8 +263,8 @@ describe('native Sidechain theme and accessibility guard', () => {
     // fixture's live custom properties for both schemes.
     expect(getComputedStyle(mounted.themeRoot).getPropertyValue('--dsw-alias-label-primary').trim())
       .toBe(THEME_TOKENS[theme].get('--dsw-alias-label-primary'))
-    assertThemePaint(view, 'color', '--dsw-alias-label-primary', theme)
-    assertThemePaint(view.children[0] as HTMLElement, 'border-bottom-color', '--dsw-alias-border-l2', theme)
+    assertStylePaint('.sidechain', 'color', '--dsw-alias-label-primary', theme)
+    assertStylePaint('.sidechainHeader', 'border-bottom', '--dsw-alias-border-l2', theme)
     expect(view.tagName).not.toBe('ASIDE')
     assertNormalGeometry(view)
     unmount(mounted.root, mounted.container)
@@ -271,11 +281,13 @@ describe('native Sidechain theme and accessibility guard', () => {
     await settle()
     const lightInput = light.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
     const lightAssistant = light.container.querySelector<HTMLElement>('[data-transcript-kind="assistant"]')!
-    assertThemePaint(lightInput, 'color', '--dsw-alias-label-primary', 'light')
-    assertThemePaint(lightInput, 'background-color', '--dsw-alias-bg-layer-2', 'light')
-    assertThemePaint(lightInput, 'border-top-color', '--dsw-alias-border-l2', 'light')
-    assertThemePaint(lightAssistant, 'color', '--dsw-alias-label-primary', 'light')
-    assertThemePaint(lightAssistant, 'background-color', '--dsw-alias-interactive-bg-active', 'light')
+    expect(lightInput).not.toBeNull()
+    expect(lightAssistant).not.toBeNull()
+    assertStylePaint('.sidechainComposerInput', 'color', '--dsw-alias-label-primary', 'light')
+    assertStylePaint('.sidechainComposerInput', 'background', '--dsw-alias-bg-layer-2', 'light')
+    assertStylePaint('.sidechainComposerInput', 'border', '--dsw-alias-border-l2', 'light')
+    assertStylePaint('.transcript', 'color', '--dsw-alias-label-primary', 'light')
+    assertStylePaint('.assistant', 'background', '--dsw-alias-interactive-bg-active', 'light')
     const dark = fixture({
       theme: 'dark', selectedChildId: 'child',
       fetchTranscript: vi.fn(async () => transcript([
@@ -285,11 +297,13 @@ describe('native Sidechain theme and accessibility guard', () => {
     await settle()
     const darkInput = dark.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
     const darkAssistant = dark.container.querySelector<HTMLElement>('[data-transcript-kind="assistant"]')!
-    assertThemePaint(darkInput, 'color', '--dsw-alias-label-primary', 'dark')
-    assertThemePaint(darkInput, 'background-color', '--dsw-alias-bg-layer-2', 'dark')
-    assertThemePaint(darkInput, 'border-top-color', '--dsw-alias-border-l2', 'dark')
-    assertThemePaint(darkAssistant, 'color', '--dsw-alias-label-primary', 'dark')
-    assertThemePaint(darkAssistant, 'background-color', '--dsw-alias-interactive-bg-active', 'dark')
+    expect(darkInput).not.toBeNull()
+    expect(darkAssistant).not.toBeNull()
+    assertStylePaint('.sidechainComposerInput', 'color', '--dsw-alias-label-primary', 'dark')
+    assertStylePaint('.sidechainComposerInput', 'background', '--dsw-alias-bg-layer-2', 'dark')
+    assertStylePaint('.sidechainComposerInput', 'border', '--dsw-alias-border-l2', 'dark')
+    assertStylePaint('.transcript', 'color', '--dsw-alias-label-primary', 'dark')
+    assertStylePaint('.assistant', 'background', '--dsw-alias-interactive-bg-active', 'dark')
     expect(resolveThemeToken('--dsw-alias-label-primary', THEME_TOKENS.light))
       .not.toBe(resolveThemeToken('--dsw-alias-label-primary', THEME_TOKENS.dark))
     expect(resolveThemeToken('--dsw-alias-bg-layer-2', THEME_TOKENS.light))
@@ -300,12 +314,16 @@ describe('native Sidechain theme and accessibility guard', () => {
     }
   })
 
-  it('names and keyboard-enables child selection and the back action', () => {
+  it('names and keyboard-enables child selection and the back action', async () => {
     const mounted = fixture({ theme: 'light', entries: [child('alpha')] })
+    const user = userEvent.setup()
     const row = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-row="alpha"]')!
     expect(row.getAttribute('aria-label')).toBe('alpha')
     expect(keyboardReachable(row)).toBe(true)
-    act(() => { keyboardActivate(row, 'Enter') })
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(row)
+    await user.keyboard('{Enter}')
     expect(mounted.controller.selectChild).toHaveBeenCalledWith('parent', 'alpha')
 
     mounted.rerender(createElement(SidechainView, {
@@ -321,15 +339,18 @@ describe('native Sidechain theme and accessibility guard', () => {
     const back = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-back]')!
     expect(back.textContent).toContain(mounted.labels.sidechainBack)
     expect(keyboardReachable(back)).toBe(true)
-    act(() => { keyboardActivate(back, 'Enter') })
+    await user.tab()
+    expect(document.activeElement).toBe(back)
+    await user.keyboard('{Enter}')
     expect(mounted.controller.selectChild).toHaveBeenLastCalledWith('parent', undefined)
     unmount(mounted.root, mounted.container)
     mounted.themeRoot.remove()
   })
 
-  it('keeps catalog retry named and keyboard reachable', () => {
+  it('keeps catalog retry named and keyboard reachable', async () => {
     const refreshSubagents = vi.fn()
     const mounted = fixture({ theme: 'dark', catalogState: 'error' })
+    const user = userEvent.setup()
     const errorSessions = { ...mounted.sessionFeed, refreshSubagents }
     mounted.rerender(createElement(SidechainView, {
       ctx: { sessions: errorSessions } as never,
@@ -346,7 +367,10 @@ describe('native Sidechain theme and accessibility guard', () => {
     expect(retry).toBeDefined()
     expect(retry.getAttribute('aria-label') ?? retry.textContent).toContain(mounted.labels.sidechainRetry)
     expect(keyboardReachable(retry)).toBe(true)
-    act(() => { keyboardActivate(retry, ' ') })
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(retry)
+    await user.keyboard('[Space]')
     expect(refreshSubagents).toHaveBeenCalledWith('parent')
     unmount(mounted.root, mounted.container)
     mounted.themeRoot.remove()
@@ -355,12 +379,16 @@ describe('native Sidechain theme and accessibility guard', () => {
   it('names and keyboard-enables transcript retry after a read failure', async () => {
     const fetchTranscript = vi.fn().mockRejectedValue(new Error('offline')) as SidechainHistory['fetchTranscript']
     const mounted = fixture({ theme: 'light', selectedChildId: 'child', fetchTranscript })
+    const user = userEvent.setup()
     await settle()
     assertNormalGeometry(mounted.container.querySelector<HTMLElement>('[data-sidechain-view]')!)
     const retry = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-transcript-retry]')!
     expect(retry.textContent).toContain(mounted.labels.sidechainRetry)
     expect(keyboardReachable(retry)).toBe(true)
-    act(() => { keyboardActivate(retry, 'Enter') })
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(retry)
+    await user.keyboard('{Enter}')
     await settle()
     expect(fetchTranscript).toHaveBeenCalledTimes(2)
     unmount(mounted.root, mounted.container)
@@ -370,6 +398,7 @@ describe('native Sidechain theme and accessibility guard', () => {
   it('names and keyboard-enables submit, preserving the real admission path', async () => {
     const sendPrompt = vi.fn(async () => true) as SidechainHistory['sendPrompt']
     const mounted = fixture({ theme: 'dark', selectedChildId: 'child', sendPrompt })
+    const user = userEvent.setup()
     await settle()
     assertNormalGeometry(mounted.container.querySelector<HTMLElement>('[data-sidechain-view]')!)
     const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
@@ -377,19 +406,13 @@ describe('native Sidechain theme and accessibility guard', () => {
     expect(input.getAttribute('aria-label')).toBe(mounted.labels.sidechainPromptPlaceholder)
     expect(keyboardReachable(input)).toBe(true)
     expect(submit.getAttribute('aria-label')).toBe(mounted.labels.sidechainSend)
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-    act(() => {
-      setter?.call(input, 'check keyboard')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(input)
+    await user.type(input, 'check keyboard')
     expect(submit.disabled).toBe(false)
     expect(keyboardReachable(submit)).toBe(true)
-    act(() => {
-      input.focus()
-      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
-      mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!
-        .dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
-    })
+    await user.keyboard('{Enter}')
     await settle()
     expect(sendPrompt).toHaveBeenCalledWith(
       { parentSessionId: 'parent', childSessionId: 'child', mode: 'continuable' },
@@ -404,6 +427,7 @@ describe('native Sidechain theme and accessibility guard', () => {
     const row: TranscriptRow = { kind: 'assistant', seq: 1, text: 'See `src/a.ts`' }
     const fetchTranscript = vi.fn(async () => transcript([row], ['src/a.ts'])) as SidechainHistory['fetchTranscript']
     const mounted = fixture({ theme: 'light', selectedChildId: 'child', fetchTranscript })
+    const user = userEvent.setup()
     await settle()
     assertNormalGeometry(mounted.container.querySelector<HTMLElement>('[data-sidechain-view]')!)
     expect(fetchTranscript).toHaveBeenCalled()
@@ -414,7 +438,10 @@ describe('native Sidechain theme and accessibility guard', () => {
     )!
     expect(link).not.toBeNull()
     expect(keyboardReachable(link)).toBe(true)
-    act(() => { keyboardActivate(link, 'Enter') })
+    await user.tab()
+    await user.tab()
+    expect(document.activeElement).toBe(link)
+    await user.keyboard('{Enter}')
     expect(mounted.service.openFile).toHaveBeenCalledWith(mounted.scope, '/workspace/src/a.ts')
     unmount(mounted.root, mounted.container)
     mounted.themeRoot.remove()
