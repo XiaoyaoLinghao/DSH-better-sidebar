@@ -29,6 +29,7 @@ export function createSidechainTab(options: SidechainTabOptions): TabDescriptor 
     },
     badge: (ctx: Context, scope, _state: SidebarState) => {
       const catalog = ctx.sessions.list.getSnapshot().subagentsByParent?.[scope.sessionId]
+      if (catalog?.state !== 'ready') return 0
       return catalog?.entries.filter(entry => entry.kind === 'child' && entry.activity === 'running').length ?? 0
     },
     component: (props: TabComponentProps) => {
