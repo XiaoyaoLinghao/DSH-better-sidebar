@@ -17,7 +17,7 @@
   width: fit-content;
   padding: 6px 10px;
   border-radius: 10px;
-  line-height: 1.5;
+  font: var(--dsw-font-xxs-12);
   overflow-wrap: anywhere;
 }
 
@@ -44,9 +44,7 @@
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.5;
+  font: var(--dsw-font-markdown-code-block-small);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -73,7 +71,7 @@
 .tool {
   min-width: 0;
   color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
+  font: var(--dsw-font-xxs-12);
 }
 
 .toolBody {
@@ -93,9 +91,7 @@
   border-radius: 6px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-secondary);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.5;
+  font: var(--dsw-font-markdown-code-block-small);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

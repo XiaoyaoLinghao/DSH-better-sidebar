@@ -1,4 +1,12 @@
-import { useState } from 'react'
+/**
+ * Portions of this file are adapted from @dsh-external/dsh-sidechain,
+ * Copyright (c) 2026, dsh-external contributors, under the BSD-3-Clause
+ * License. See THIRD_PARTY_NOTICES for the complete notice.
+ *
+ * Native better-sidebar presentation of the durable sidechain transcript.
+ */
+
+import { useMemo, useState } from 'react'
 import {
   DisclosureRow,
   IconBrowseOutline16,
@@ -31,12 +39,24 @@ function record(value: unknown): AnyRecord | undefined {
     : undefined
 }
 
-function prettyInput(detail: ToolDetail): string | undefined {
+const TOOL_ARGUMENTS_MAX = 2000
+
+function prettyInput(detail: ToolDetail, callView: AnyRecord | undefined): string | undefined {
+  const curated = callView?.rawInput
+  if (curated !== undefined) {
+    try {
+      return JSON.stringify(curated, null, 2)
+    } catch {
+      // Fall through to the bounded raw argument representation.
+    }
+  }
   if (detail.arguments === undefined) return undefined
+  const bounded = detail.arguments.slice(0, TOOL_ARGUMENTS_MAX)
   try {
-    return JSON.stringify(JSON.parse(detail.arguments), null, 2)
+    const pretty = JSON.stringify(JSON.parse(bounded), null, 2)
+    return pretty.length > TOOL_ARGUMENTS_MAX ? pretty.slice(0, TOOL_ARGUMENTS_MAX) : pretty
   } catch {
-    return detail.arguments
+    return bounded
   }
 }
 
@@ -62,7 +82,7 @@ function resultText(view: unknown): string | undefined {
   return undefined
 }
 
-function codeLabels(labels: SidechainLabels): MarkdownCodeLabels {
+function createCodeLabels(labels: SidechainLabels): MarkdownCodeLabels {
   return { copyLabel: labels.copy, copiedLabel: labels.copied }
 }
 
@@ -70,18 +90,18 @@ function MarkdownRow({
   text,
   streaming,
   fileMentions,
-  labels,
+  codeLabels,
 }: {
   text: string
   streaming: boolean
   fileMentions: MarkdownFileMentions | undefined
-  labels: SidechainLabels
+  codeLabels: MarkdownCodeLabels
 }): JSX.Element {
   return (
     <MarkdownText
       text={text}
       streaming={streaming}
-      codeLabels={codeLabels(labels)}
+      codeLabels={codeLabels}
       fileMentions={fileMentions}
     />
   )
@@ -89,11 +109,11 @@ function MarkdownRow({
 
 function DisclosureTranscriptRow({
   row,
-  streaming,
+  rowStreaming,
   labels,
 }: {
   row: Extract<TranscriptRow, { kind: 'reasoning' | 'context' }>
-  streaming: boolean
+  rowStreaming: boolean
   labels: SidechainLabels
 }): JSX.Element {
   const [open, setOpen] = useState(false)
@@ -114,7 +134,7 @@ function DisclosureTranscriptRow({
         collapsedContent={(
           <>
             <span className={styles.separator} aria-hidden="true" />
-            <span className={styles.summary}>{source ?? (streaming ? summary.slice(-120) : summary)}</span>
+            <span className={styles.summary}>{source ?? (rowStreaming ? summary.slice(-120) : summary)}</span>
           </>
         )}
       >
@@ -126,21 +146,23 @@ function DisclosureTranscriptRow({
 
 function ToolTranscriptRow({
   row,
-  streaming,
+  rowStreaming,
   fileMentions,
   labels,
+  codeLabels,
 }: {
   row: Extract<TranscriptRow, { kind: 'tool' }>
-  streaming: boolean
+  rowStreaming: boolean
   fileMentions: MarkdownFileMentions | undefined
   labels: SidechainLabels
+  codeLabels: MarkdownCodeLabels
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const detail = row.detail
   const callView = record(detail?.callView)
   const resultView = record(detail?.resultView)
   const terminal = callView?.card === 'terminal' || resultView?.card === 'terminal'
-  const input = detail === undefined ? undefined : prettyInput(detail)
+  const input = detail === undefined ? undefined : prettyInput(detail, callView)
   const output = resultText(detail?.resultView)
   const expandable = detail !== undefined && (
     terminal || input !== undefined || output !== undefined || detail.error !== undefined
@@ -152,12 +174,18 @@ function ToolTranscriptRow({
   return (
     <div className={styles.tool} data-transcript-kind="tool" aria-label={labels.sidechainToolDetails}>
       <DisclosureRow
-        icon={<StateDot state={row.failed ? 'error' : streaming && detail?.resultView === undefined ? 'ongoing' : 'done'} />}
-        title={title}
+        icon={<StateDot state={row.failed ? 'error' : rowStreaming && detail?.resultView === undefined ? 'ongoing' : 'done'} />}
+        title={labels.sidechainToolDetails}
         open={open}
         expandable={expandable}
+        expandOnRowClick={expandable}
         onToggle={() => { setOpen(value => !value) }}
-        collapsedContent={row.failed ? <span className={styles.toolFailure}> {labels.sidechainToolFailed}</span> : undefined}
+        collapsedContent={(
+          <>
+            <span className={styles.summary}>{title}</span>
+            {row.failed && <span className={styles.toolFailure}> {labels.sidechainToolFailed}</span>}
+          </>
+        )}
       >
         <div className={styles.toolBody}>
           {terminal && (
@@ -172,7 +200,7 @@ function ToolTranscriptRow({
               <MarkdownText
                 text={output}
                 streaming={false}
-                codeLabels={codeLabels(labels)}
+                codeLabels={codeLabels}
                 fileMentions={fileMentions}
               />
             </div>
@@ -190,49 +218,69 @@ function ToolTranscriptRow({
 
 function TranscriptRowView({
   row,
-  streaming,
+  rowStreaming,
   fileMentions,
   labels,
+  codeLabels,
 }: {
   row: TranscriptRow
-  streaming: boolean
+  rowStreaming: boolean
   fileMentions: MarkdownFileMentions | undefined
   labels: SidechainLabels
+  codeLabels: MarkdownCodeLabels
 }): JSX.Element {
   if (row.kind === 'reasoning' || row.kind === 'context') {
-    return <DisclosureTranscriptRow row={row} streaming={streaming} labels={labels} />
+    return <DisclosureTranscriptRow row={row} rowStreaming={rowStreaming} labels={labels} />
   }
   if (row.kind === 'tool') {
-    return <ToolTranscriptRow row={row} streaming={streaming} fileMentions={fileMentions} labels={labels} />
+    return <ToolTranscriptRow row={row} rowStreaming={rowStreaming} fileMentions={fileMentions} labels={labels} codeLabels={codeLabels} />
   }
   const assistant = row.kind === 'assistant'
   return (
     <div
-      className={`${styles.row} ${assistant ? styles.assistant : styles.user} ${streaming ? styles.streaming : ''}`}
+      className={`${styles.row} ${assistant ? styles.assistant : styles.user} ${rowStreaming ? styles.streaming : ''}`}
       data-transcript-kind={row.kind}
-      data-streaming={streaming ? 'true' : 'false'}
+      data-streaming={rowStreaming ? 'true' : 'false'}
     >
       <MarkdownRow
         text={row.text}
-        streaming={streaming}
+        streaming={rowStreaming}
         fileMentions={fileMentions}
-        labels={labels}
+        codeLabels={codeLabels}
       />
-      {streaming && <span className={styles.streamingMarker} data-streaming-marker aria-hidden="true" />}
+      {rowStreaming && <span className={styles.streamingMarker} data-streaming-marker aria-hidden="true" />}
     </div>
   )
 }
 
 export function TranscriptRows({ rows, streaming, fileMentions, labels }: TranscriptRowsProps): JSX.Element {
+  const codeLabels = useMemo<MarkdownCodeLabels>(
+    () => createCodeLabels(labels),
+    [labels.copy, labels.copied],
+  )
+  const localizedFileMentions = useMemo<MarkdownFileMentions | undefined>(() => {
+    if (fileMentions === undefined) return undefined
+    return {
+      resolve(value) {
+        const mention = fileMentions.resolve(value)
+        if (mention === undefined) return undefined
+        return {
+          ...mention,
+          label: `${labels.sidechainOpenFile}: ${mention.label || value}`,
+        }
+      },
+    }
+  }, [fileMentions, labels.sidechainOpenFile])
   return (
     <div className={styles.transcript} data-transcript-rows role="list">
-      {rows.map(row => (
-        <div role="listitem" key={`${row.kind}:${row.seq}`}>
+      {rows.map((row, index) => (
+        <div role="listitem" key={`${row.kind}:${row.seq}:${index}`}>
           <TranscriptRowView
             row={row}
-            streaming={streaming}
-            fileMentions={fileMentions}
+            rowStreaming={streaming && index === rows.length - 1}
+            fileMentions={localizedFileMentions}
             labels={labels}
+            codeLabels={codeLabels}
           />
         </div>
       ))}
