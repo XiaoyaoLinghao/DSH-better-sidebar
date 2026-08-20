@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -8,6 +8,10 @@ const helper = resolve(process.cwd(), 'scripts/safe-temp.mjs')
 
 function invoke(...args: string[]) {
   return spawnSync(process.execPath, [helper, ...args], { encoding: 'utf8' })
+}
+
+function invokeAsync(args: string[], env?: NodeJS.ProcessEnv) {
+  return spawn(process.execPath, [helper, ...args], { env: { ...process.env, NODE_ENV: 'test', ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
 function createSandbox() {
@@ -51,6 +55,11 @@ describe('verification script scratch safety', () => {
       expect(typeof owned.token).toBe('string')
       expect(invoke('remove', owned.scratch, base, root, 'dsh-safety.', owned.token).status).toBe(0)
       expect(invoke('remove', owned.scratch, base, root, 'dsh-safety.', owned.token).status).toBe(0)
+      expect(existsSync(join(base, '.dsh-verification-receipts'))).toBe(false)
+      const recreated = createOwned(base, root)
+      expect(invoke('remove', recreated.scratch, base, root, 'dsh-safety.', recreated.token).status).toBe(0)
+      mkdirSync(recreated.scratch)
+      expect(invoke('remove', recreated.scratch, base, root, 'dsh-safety.', recreated.token).status).not.toBe(0)
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }
@@ -113,11 +122,60 @@ describe('verification script scratch safety', () => {
     }
   })
 
+  it('force-kills a process group when parent and descendant ignore SIGTERM', async () => {
+    const { sandbox } = createSandbox()
+    const pidFile = join(sandbox, 'parent.pid')
+    const childPidFile = join(sandbox, 'child.pid')
+    const logFile = join(sandbox, 'tree.log')
+    const script = 'const fs=require("node:fs");const {spawn}=require("node:child_process");process.on("SIGTERM",()=>{});const c=spawn(process.execPath,["-e","process.on(\\"SIGTERM\\",()=>{});setTimeout(()=>{},60000)"]);fs.writeFileSync(process.argv[1],String(c.pid));setTimeout(()=>{},60000)'
+    try {
+      const launcher = invokeAsync(['launch', pidFile, logFile, process.execPath, '-e', script, childPidFile])
+      for (let attempt = 0; attempt < 80 && (!existsSync(pidFile) || !existsSync(childPidFile)); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(existsSync(pidFile)).toBe(true)
+      expect(existsSync(childPidFile)).toBe(true)
+      const parentPid = readFileSync(pidFile, 'utf8').trim()
+      const childPid = readFileSync(childPidFile, 'utf8').trim()
+      expect(invoke('terminate', parentPid).status).toBe(0)
+      await Promise.race([
+        new Promise<void>((resolve) => launcher.once('exit', () => resolve())),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('launcher did not terminate')), 5000)),
+      ])
+      const alive = (pid: string) => spawnSync(process.execPath, ['-e', `try { process.kill(${pid}, 0); process.exit(0) } catch { process.exit(1) }`]).status === 0
+      expect(alive(parentPid)).toBe(false)
+      expect(alive(childPid)).toBe(false)
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  it('does not delete a swapped path when validation races with an attacker', async () => {
+    const { sandbox, root, base } = createSandbox()
+    const pause = join(sandbox, 'pause')
+    try {
+      const owned = createOwned(base, root)
+      const moved = join(base, 'moved-original')
+      mkdirSync(pause)
+      const remover = invokeAsync(['remove', owned.scratch, base, root, 'dsh-safety.', owned.token], { DSH_SAFE_TEMP_PAUSE_DIR: pause })
+      for (let attempt = 0; attempt < 40 && !existsSync(join(pause, 'ready')); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(existsSync(join(pause, 'ready'))).toBe(true)
+      renameSync(owned.scratch, moved)
+      mkdirSync(owned.scratch)
+      writeFileSync(join(pause, 'go'), 'go')
+      await new Promise<void>((resolve) => remover.once('exit', () => resolve()))
+      expect(remover.exitCode).not.toBe(0)
+      expect(existsSync(owned.scratch)).toBe(true)
+      expect(existsSync(moved)).toBe(true)
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   it('keeps the mount script on the fresh-pack and isolated-launch contract', () => {
     const script = readFileSync(resolve(process.cwd(), 'scripts/e2e-mount.sh'), 'utf8')
     expect(script).toContain('pnpm pack --pack-destination "$SCRATCH"')
     expect(script).toContain('node "$SAFE_TEMP" launch')
     expect(script).toContain('@deepseek-ai/dsh@0.1.0-rc.8')
     expect(script).not.toContain('for candidate in "$ROOT"/dsh-better-sidebar-*.tgz')
+    expect(readFileSync(resolve(process.cwd(), 'scripts/safe-temp.mjs'), 'utf8')).toContain('SIGKILL')
   })
 })

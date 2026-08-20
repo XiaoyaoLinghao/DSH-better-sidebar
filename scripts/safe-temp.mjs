@@ -7,7 +7,6 @@ import path from 'node:path'
 
 const VERSION = 1
 const MARKER_NAME = '.dsh-verification-owner.json'
-const RECEIPT_DIR = '.dsh-verification-receipts'
 const TOKEN_RE = /^[a-f0-9]{64}$/
 
 function fail(message) {
@@ -70,13 +69,9 @@ function assertToken(token) {
   if (typeof token !== 'string' || !TOKEN_RE.test(token)) fail('invalid ownership token')
 }
 
-function receiptPath(base, token) {
+function receiptPath(scratch, token) {
   assertToken(token)
-  const directory = path.join(base, RECEIPT_DIR)
-  let stat
-  try { stat = fs.lstatSync(directory) } catch { fail('ownership receipt directory is missing') }
-  if (!stat.isDirectory() || stat.isSymbolicLink()) fail('ownership receipt directory must not be a symlink')
-  return path.join(directory, `${crypto.createHash('sha256').update(token).digest('hex')}.json`)
+  return path.join(scratch, `.dsh-verification-receipt-${crypto.createHash('sha256').update(token).digest('hex')}.json`)
 }
 
 function writeExclusive(file, value, mode) {
@@ -102,6 +97,45 @@ function assertRecord(record, expected) {
   for (const key of ['version', 'base', 'root', 'scratch', 'token', 'prefix']) {
     if (record?.[key] !== expected[key]) fail(`ownership record ${key} mismatch`)
   }
+  if (expected.identity && !sameIdentity(record?.identity, expected.identity)) fail('ownership record identity mismatch')
+}
+
+function identityFor(value, label = 'scratch') {
+  const canonical = fs.realpathSync.native(absolute(value, label))
+  const stat = fs.statSync(canonical)
+  return { realpath: canonical, dev: Number(stat.dev) || 0, ino: Number(stat.ino) || 0 }
+}
+
+function sameIdentity(actual, expected, requirePath = false) {
+  if (!actual || !expected) return false
+  if (requirePath && actual.realpath !== expected.realpath) return false
+  if (actual.dev && expected.dev && actual.dev !== expected.dev) return false
+  if (actual.ino && expected.ino && actual.ino !== expected.ino) return false
+  return Boolean((actual.dev && expected.dev && actual.dev === expected.dev && actual.ino && expected.ino && actual.ino === expected.ino) || actual.realpath === expected.realpath)
+}
+
+function quarantinePath(base, prefix, token) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const candidate = path.join(base, `.${prefix}quarantine-${token.slice(0, 16)}-${crypto.randomBytes(8).toString('hex')}`)
+    if (!fs.existsSync(candidate)) return candidate
+  }
+  fail('could not allocate a quarantine path')
+}
+
+function pauseAfterValidation() {
+  if (process.env.NODE_ENV !== 'test' || !process.env.DSH_SAFE_TEMP_PAUSE_DIR) return
+  const pause = absolute(process.env.DSH_SAFE_TEMP_PAUSE_DIR, 'test pause directory')
+  const parent = canonicalExisting(path.dirname(pause), 'test pause parent')
+  const pauseCanonical = canonicalMaybeMissing(pause, 'test pause directory')
+  if (!withinOrEqual(pauseCanonical, parent)) fail('test pause directory escapes temporary directory')
+  fs.mkdirSync(pause, { recursive: true })
+  writeExclusive(path.join(pause, 'ready'), { version: VERSION }, 0o600)
+  const deadline = Date.now() + 10_000
+  while (!fs.existsSync(path.join(pause, 'go'))) {
+    if (Date.now() > deadline) fail('test pause timed out')
+    const wait = new Int32Array(new SharedArrayBuffer(4))
+    Atomics.wait(wait, 0, 0, 20)
+  }
 }
 
 function canonicalRoots(baseArg, rootArg, createBase = false) {
@@ -124,25 +158,30 @@ function create(baseArg, rootArg, prefix) {
   assertPrefix(prefix)
   const { base, root } = canonicalRoots(baseArg, rootArg, true)
   let scratch
-  let receipt
+  let createdIdentity
+  let token
   try {
     scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(base, prefix)))
     assertScratchIdentity(scratch, base, root, prefix)
-    const token = crypto.randomBytes(32).toString('hex')
-    const record = { version: VERSION, base, root, scratch, token, prefix }
-    const receipts = path.join(base, RECEIPT_DIR)
-    fs.mkdirSync(receipts, { recursive: true, mode: 0o700 })
-    if (fs.lstatSync(receipts).isSymbolicLink()) fail('ownership receipt directory must not be a symlink')
-    receipt = receiptPath(base, token)
-    writeExclusive(receipt, record, 0o600)
+    createdIdentity = identityFor(scratch)
+    token = crypto.randomBytes(32).toString('hex')
+    const record = { version: VERSION, base, root, scratch, token, prefix, identity: createdIdentity }
+    writeExclusive(receiptPath(scratch, token), record, 0o600)
     writeExclusive(path.join(scratch, MARKER_NAME), record, 0o600)
     process.stdout.write(`${JSON.stringify({ version: VERSION, scratch, token })}\n`)
   } catch (error) {
-    if (receipt) {
-      try { fs.rmSync(receipt, { force: true }) } catch { /* preserve original failure */ }
-    }
-    if (scratch) {
-      try { fs.rmSync(scratch, { recursive: true, force: true }) } catch { /* preserve original failure */ }
+    if (scratch && createdIdentity) {
+      try {
+        const current = identityFor(scratch)
+        if (!sameIdentity(current, createdIdentity, true)) fail('created scratch identity changed during setup')
+        const quarantine = quarantinePath(base, prefix, token || crypto.randomBytes(32).toString('hex'))
+        fs.renameSync(scratch, quarantine)
+        const quarantined = identityFor(quarantine)
+        if (!sameIdentity(quarantined, createdIdentity)) fail(`setup quarantine identity mismatch: ${quarantine}`)
+        fs.rmSync(quarantine, { recursive: true, force: true })
+      } catch (cleanupError) {
+        console.error(`[safe-temp] setup cleanup refused; recover scratch manually: ${scratch} (${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)})`)
+      }
     }
     throw error
   }
@@ -153,31 +192,56 @@ function ownership(scratchArg, baseArg, rootArg, prefix, token, requirePresent =
   assertToken(token)
   const { base, root } = canonicalRoots(baseArg, rootArg)
   const scratchRequested = absolute(scratchArg, 'scratch')
-  const receipt = receiptPath(base, token)
-  const record = readJsonFile(receipt, 'ownership receipt')
-  if (record?.version !== VERSION || typeof record?.base !== 'string' || typeof record?.root !== 'string' || typeof record?.scratch !== 'string' || typeof record?.prefix !== 'string') fail('ownership receipt has invalid fields')
-  assertRecord(record, { version: VERSION, base, root, scratch: record?.scratch, token, prefix })
   const scratchExists = fs.existsSync(scratchRequested)
-  if (scratchExists) {
-    const stat = fs.lstatSync(scratchRequested)
-    if (!stat.isDirectory() || stat.isSymbolicLink()) fail('scratch must be the originally-owned real directory')
-    const scratch = fs.realpathSync.native(scratchRequested)
-    assertRecord(record, { version: VERSION, base, root, scratch, token, prefix })
-    assertScratchIdentity(scratch, base, root, prefix)
-    const marker = path.join(scratchRequested, MARKER_NAME)
-    const markerRecord = readJsonFile(marker, 'ownership marker')
-    assertRecord(markerRecord, record)
-    return { base, root, scratch, requested: scratchRequested, record, present: true }
+  if (!scratchExists) {
+    const missingCanonical = canonicalMaybeMissing(scratchRequested, 'scratch')
+    assertScratchIdentity(missingCanonical, base, root, prefix)
+    if (requirePresent) fail('scratch is missing')
+    return { base, root, scratch: missingCanonical, requested: scratchRequested, record: null, present: false }
   }
-  const missingCanonical = canonicalMaybeMissing(scratchRequested, 'scratch')
-  if (missingCanonical !== record.scratch) fail('missing scratch does not match ownership receipt')
-  if (requirePresent) fail('scratch is missing')
-  return { base, root, scratch: record.scratch, requested: scratchRequested, record, present: false }
+  const stat = fs.lstatSync(scratchRequested)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) fail('scratch must be the originally-owned real directory')
+  const scratch = fs.realpathSync.native(scratchRequested)
+  assertScratchIdentity(scratch, base, root, prefix)
+  const markerRecord = readJsonFile(path.join(scratchRequested, MARKER_NAME), 'ownership marker')
+  if (markerRecord?.version !== VERSION || typeof markerRecord?.base !== 'string' || typeof markerRecord?.root !== 'string' || typeof markerRecord?.scratch !== 'string' || typeof markerRecord?.prefix !== 'string' || !markerRecord.identity) fail('ownership marker has invalid fields')
+  const identity = identityFor(scratch)
+  assertRecord(markerRecord, { version: VERSION, base, root, scratch, token, prefix, identity })
+  const receipt = readJsonFile(receiptPath(scratchRequested, token), 'ownership receipt')
+  assertRecord(receipt, { version: VERSION, base, root, scratch, token, prefix, identity })
+  return { base, root, scratch, requested: scratchRequested, record: receipt, identity, present: true }
 }
 
 function remove(scratchArg, baseArg, rootArg, prefix, token) {
   const owned = ownership(scratchArg, baseArg, rootArg, prefix, token)
-  if (owned.present) fs.rmSync(owned.requested, { recursive: true, force: true })
+  if (!owned.present) return
+  pauseAfterValidation()
+  let quarantine
+  try {
+    quarantine = quarantinePath(owned.base, prefix, token)
+    fs.renameSync(owned.requested, quarantine)
+  } catch (error) {
+    if (!fs.existsSync(owned.requested)) return
+    throw error
+  }
+  try {
+    const stat = fs.lstatSync(quarantine)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) fail('quarantine is not a real directory')
+    const identity = identityFor(quarantine)
+    if (!sameIdentity(identity, owned.identity)) fail(`quarantine identity mismatch: ${quarantine}`)
+    const marker = readJsonFile(path.join(quarantine, MARKER_NAME), 'quarantine marker')
+    assertRecord(marker, { ...owned.record, scratch: owned.record.scratch, identity: owned.identity })
+    fs.rmSync(quarantine, { recursive: true, force: true })
+  } catch (error) {
+    let recovery = quarantine
+    if (!fs.existsSync(owned.requested)) {
+      try {
+        fs.renameSync(quarantine, owned.requested)
+        recovery = owned.requested
+      } catch { /* leave quarantine for recovery */ }
+    }
+    throw new Error(`${error instanceof Error ? error.message : String(error)}; recovery path: ${recovery}`)
+  }
 }
 
 function link(targetArg, linkArg, scratchArg, baseArg, rootArg, prefix, token) {
@@ -224,7 +288,21 @@ function terminate(pidArg) {
   const pid = Number(pidArg)
   try {
     if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
-    else process.kill(-pid, 'SIGTERM')
+    else {
+      process.kill(-pid, 'SIGTERM')
+      const deadline = Date.now() + 2_000
+      while (Date.now() < deadline) {
+        try { process.kill(-pid, 0) } catch (error) {
+          if (error?.code === 'ESRCH') return
+          throw error
+        }
+        const wait = new Int32Array(new SharedArrayBuffer(4))
+        Atomics.wait(wait, 0, 0, 25)
+      }
+      try { process.kill(-pid, 'SIGKILL') } catch (error) {
+        if (error?.code !== 'ESRCH') throw error
+      }
+    }
   } catch (error) {
     if (error?.code !== 'ESRCH' && process.platform !== 'win32') throw error
   }
