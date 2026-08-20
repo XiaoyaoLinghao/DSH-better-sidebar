@@ -47,6 +47,10 @@ export function createSidechainController(
   store: SidebarStore,
 ): SidechainController {
   const claims = new Map<string, Set<string>>()
+  // Every reset invalidates deferred work already queued for that session.
+  // A queued generic callback may otherwise run after a session switch and
+  // open a tab for stale conversation data.
+  const sessionGenerations = new Map<string, number>()
   let disposed = false
 
   const sidechainTab = (state: SidebarState): SidebarTab | undefined => {
@@ -149,8 +153,10 @@ export function createSidechainController(
 
   const deferGenericCandidate = (sessionId: string, childId: string, open: () => void): void => {
     if (disposed) return
+    const generation = sessionGenerations.get(sessionId) ?? 0
     queueMicrotask(() => {
       if (disposed) return
+      if ((sessionGenerations.get(sessionId) ?? 0) !== generation) return
       const sessionClaims = claims.get(sessionId)
       if (sessionClaims?.delete(childId)) {
         if (sessionClaims.size === 0) claims.delete(sessionId)
@@ -162,6 +168,7 @@ export function createSidechainController(
 
   const resetSession = (sessionId: string): void => {
     claims.delete(sessionId)
+    sessionGenerations.set(sessionId, (sessionGenerations.get(sessionId) ?? 0) + 1)
   }
 
   const dispose = (): void => {
