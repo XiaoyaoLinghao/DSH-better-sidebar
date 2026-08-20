@@ -17,6 +17,7 @@ import type { SidechainController } from '../src/client/sidechain/controller.ts'
 import type { SidechainHistory } from '../src/client/sidechain/history.ts'
 import type { TranscriptRow } from '../src/client/sidechain/transcript.ts'
 import { SidechainView } from '../src/client/sidechain/SidechainView.tsx'
+import styles from '../src/client/sidechain/SidechainView.module.css'
 import { getSidechainLabels } from '../src/client/locales.ts'
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
@@ -80,6 +81,26 @@ function parseThemeTokens(): ThemeTokens {
 
 const THEME_TOKENS = parseThemeTokens()
 
+interface PaintContract {
+  key: keyof typeof styles
+  selector: string
+  property: string
+  token: string
+}
+
+const PAINT_CONTRACTS = {
+  sidechain: { key: 'sidechain', selector: '.sidechain', property: 'color', token: '--dsw-alias-label-primary' },
+  header: { key: 'sidechainHeader', selector: '.sidechainHeader', property: 'border-bottom', token: '--dsw-alias-border-l2' },
+  footer: { key: 'sidechainFooter', selector: '.sidechainFooter', property: 'border-top', token: '--dsw-alias-border-l2' },
+  composerInput: { key: 'sidechainComposerInput', selector: '.sidechainComposerInput', property: 'border', token: '--dsw-alias-border-l2' },
+  composerBackground: { key: 'sidechainComposerInput', selector: '.sidechainComposerInput', property: 'background', token: '--dsw-alias-bg-layer-2' },
+  transcript: { key: 'transcript', selector: '.transcript', property: 'color', token: '--dsw-alias-label-primary' },
+  assistant: { key: 'assistant', selector: '.assistant', property: 'background', token: '--dsw-alias-interactive-bg-active' },
+  user: { key: 'user', selector: '.user', property: 'background', token: '--dsw-alias-bg-layer-2' },
+  error: { key: 'sidechainError', selector: '.sidechainError', property: 'color', token: '--dsw-alias-state-error-primary' },
+  promptError: { key: 'sidechainPromptError', selector: '.sidechainPromptError', property: 'color', token: '--dsw-alias-state-error-primary' },
+} satisfies Record<string, PaintContract>
+
 function sidechainCssReferences(): readonly string[] {
   return [...SIDECHAIN_CSS.matchAll(/var\((--dsw-[\w-]+)/g)].map(match => match[1]!)
 }
@@ -97,25 +118,56 @@ function applyThemeTokens(target: HTMLElement, theme: Theme): void {
   for (const [name, value] of THEME_TOKENS[theme]) target.style.setProperty(name, value)
 }
 
-function cssDeclaration(selector: string, property: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const blocks = [...SIDECHAIN_CSS.matchAll(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'g'))]
-  const declaration = blocks.flatMap(match => match[1]!.split(';').map(part => part.trim()))
-    .find(part => part.startsWith(`${property}:`))
-  if (blocks.length === 0) throw new Error(`Sidechain CSS selector ${selector} is missing`)
-  if (declaration === undefined) throw new Error(`${selector} has no ${property} declaration`)
-  return declaration.slice(property.length + 1).trim()
+interface CssRule {
+  selectors: readonly string[]
+  declarations: Map<string, string>
 }
 
-function assertStylePaint(selector: string, property: string, token: string, theme: Theme): void {
-  const expectedPaint = resolveThemeToken(token, THEME_TOKENS[theme]).trim().toLowerCase()
-  const declaration = cssDeclaration(selector, property).toLowerCase()
+function parseSidechainRules(): readonly CssRule[] {
+  const withoutComments = SIDECHAIN_CSS.replace(/\/\*[\s\S]*?\*\//g, '')
+  const rules: CssRule[] = []
+  for (const match of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const declarations = new Map<string, string>()
+    for (const declaration of match[2]!.matchAll(/([\w-]+)\s*:\s*([^;]+)(?:;|$)/g)) {
+      declarations.set(declaration[1]!, declaration[2]!.trim())
+    }
+    rules.push({
+      selectors: match[1]!.split(',').map(selector => selector.trim()),
+      declarations,
+    })
+  }
+  return rules
+}
+
+const SIDECHAIN_RULES = parseSidechainRules()
+
+function cssDeclaration(contract: PaintContract): string {
+  const declarations = SIDECHAIN_RULES
+    .filter(rule => rule.selectors.includes(contract.selector))
+    .map(rule => rule.declarations.get(contract.property))
+    .filter((value): value is string => value !== undefined)
+    .at(-1)
+  if (declarations === undefined) throw new Error(`${contract.selector} has no ${contract.property} declaration`)
+  return declarations
+}
+
+function assertStylePaint(contract: PaintContract, theme: Theme): void {
+  const expectedPaint = resolveThemeToken(contract.token, THEME_TOKENS[theme]).trim().toLowerCase()
+  const declaration = cssDeclaration(contract).toLowerCase()
+  const referencedToken = declaration.match(/var\((--dsw-[\w-]+)\)/)?.[1]
+  if (referencedToken === undefined) throw new Error(`${contract.selector} ${contract.property} has no theme token reference`)
+  expect(referencedToken, `${contract.selector} ${contract.property} token reference`).toBe(contract.token)
   const resolved = declaration.replace(/var\((--dsw-[\w-]+)\)/g, (_match, reference: string) =>
     resolveThemeToken(reference, THEME_TOKENS[theme]).trim().toLowerCase())
-  const expected = property.startsWith('border') ? `1px solid ${expectedPaint}` : expectedPaint
-  expect(resolved, `${selector} ${property} ${theme} style contract`).toBe(expected)
+  const expected = contract.property.startsWith('border') ? `1px solid ${expectedPaint}` : expectedPaint
+  expect(resolved, `${contract.selector} ${contract.property} ${theme} style contract`).toBe(expected)
   expect(resolved).not.toContain('var(')
   expect(resolved).not.toContain('transparent')
+}
+
+function assertMappedPaint(element: HTMLElement, contract: PaintContract, theme: Theme): void {
+  expect(element.classList.contains(styles[contract.key]!), `${contract.selector} DOM class mapping`).toBe(true)
+  assertStylePaint(contract, theme)
 }
 
 function mount(node: ReactNode): { container: HTMLDivElement; root: Root; rerender: (next: ReactNode) => void } {
@@ -263,8 +315,8 @@ describe('native Sidechain theme and accessibility guard', () => {
     // fixture's live custom properties for both schemes.
     expect(getComputedStyle(mounted.themeRoot).getPropertyValue('--dsw-alias-label-primary').trim())
       .toBe(THEME_TOKENS[theme].get('--dsw-alias-label-primary'))
-    assertStylePaint('.sidechain', 'color', '--dsw-alias-label-primary', theme)
-    assertStylePaint('.sidechainHeader', 'border-bottom', '--dsw-alias-border-l2', theme)
+    assertMappedPaint(view, PAINT_CONTRACTS.sidechain, theme)
+    assertMappedPaint(view.children[0] as HTMLElement, PAINT_CONTRACTS.header, theme)
     expect(view.tagName).not.toBe('ASIDE')
     assertNormalGeometry(view)
     unmount(mounted.root, mounted.container)
@@ -275,35 +327,47 @@ describe('native Sidechain theme and accessibility guard', () => {
     const light = fixture({
       theme: 'light', selectedChildId: 'child',
       fetchTranscript: vi.fn(async () => transcript([
+        { kind: 'user', seq: 0, text: 'Question' },
         { kind: 'assistant', seq: 1, text: '`src/a.ts`' },
       ], ['src/a.ts'])) as SidechainHistory['fetchTranscript'],
     })
     await settle()
     const lightInput = light.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
     const lightAssistant = light.container.querySelector<HTMLElement>('[data-transcript-kind="assistant"]')!
+    const lightUser = light.container.querySelector<HTMLElement>('[data-transcript-kind="user"]')!
+    const lightTranscript = light.container.querySelector<HTMLElement>('[data-transcript-rows]')!
+    const lightFooter = light.container.querySelector<HTMLElement>('[data-sidechain-footer]')!
     expect(lightInput).not.toBeNull()
     expect(lightAssistant).not.toBeNull()
-    assertStylePaint('.sidechainComposerInput', 'color', '--dsw-alias-label-primary', 'light')
-    assertStylePaint('.sidechainComposerInput', 'background', '--dsw-alias-bg-layer-2', 'light')
-    assertStylePaint('.sidechainComposerInput', 'border', '--dsw-alias-border-l2', 'light')
-    assertStylePaint('.transcript', 'color', '--dsw-alias-label-primary', 'light')
-    assertStylePaint('.assistant', 'background', '--dsw-alias-interactive-bg-active', 'light')
+    expect(lightUser).not.toBeNull()
+    assertMappedPaint(lightInput, PAINT_CONTRACTS.composerInput, 'light')
+    assertMappedPaint(lightInput, PAINT_CONTRACTS.composerBackground, 'light')
+    assertMappedPaint(lightTranscript, PAINT_CONTRACTS.transcript, 'light')
+    assertMappedPaint(lightAssistant, PAINT_CONTRACTS.assistant, 'light')
+    assertMappedPaint(lightUser, PAINT_CONTRACTS.user, 'light')
+    assertMappedPaint(lightFooter, PAINT_CONTRACTS.footer, 'light')
     const dark = fixture({
       theme: 'dark', selectedChildId: 'child',
       fetchTranscript: vi.fn(async () => transcript([
+        { kind: 'user', seq: 0, text: 'Question' },
         { kind: 'assistant', seq: 1, text: '`src/a.ts`' },
       ], ['src/a.ts'])) as SidechainHistory['fetchTranscript'],
     })
     await settle()
     const darkInput = dark.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
     const darkAssistant = dark.container.querySelector<HTMLElement>('[data-transcript-kind="assistant"]')!
+    const darkUser = dark.container.querySelector<HTMLElement>('[data-transcript-kind="user"]')!
+    const darkTranscript = dark.container.querySelector<HTMLElement>('[data-transcript-rows]')!
+    const darkFooter = dark.container.querySelector<HTMLElement>('[data-sidechain-footer]')!
     expect(darkInput).not.toBeNull()
     expect(darkAssistant).not.toBeNull()
-    assertStylePaint('.sidechainComposerInput', 'color', '--dsw-alias-label-primary', 'dark')
-    assertStylePaint('.sidechainComposerInput', 'background', '--dsw-alias-bg-layer-2', 'dark')
-    assertStylePaint('.sidechainComposerInput', 'border', '--dsw-alias-border-l2', 'dark')
-    assertStylePaint('.transcript', 'color', '--dsw-alias-label-primary', 'dark')
-    assertStylePaint('.assistant', 'background', '--dsw-alias-interactive-bg-active', 'dark')
+    expect(darkUser).not.toBeNull()
+    assertMappedPaint(darkInput, PAINT_CONTRACTS.composerInput, 'dark')
+    assertMappedPaint(darkInput, PAINT_CONTRACTS.composerBackground, 'dark')
+    assertMappedPaint(darkTranscript, PAINT_CONTRACTS.transcript, 'dark')
+    assertMappedPaint(darkAssistant, PAINT_CONTRACTS.assistant, 'dark')
+    assertMappedPaint(darkUser, PAINT_CONTRACTS.user, 'dark')
+    assertMappedPaint(darkFooter, PAINT_CONTRACTS.footer, 'dark')
     expect(resolveThemeToken('--dsw-alias-label-primary', THEME_TOKENS.light))
       .not.toBe(resolveThemeToken('--dsw-alias-label-primary', THEME_TOKENS.dark))
     expect(resolveThemeToken('--dsw-alias-bg-layer-2', THEME_TOKENS.light))
@@ -362,6 +426,7 @@ describe('native Sidechain theme and accessibility guard', () => {
       history: mounted.history,
     }))
     assertNormalGeometry(mounted.container.querySelector<HTMLElement>('[data-sidechain-view]')!)
+    assertMappedPaint(mounted.container.querySelector<HTMLElement>('[data-sidechain-error]')!, PAINT_CONTRACTS.error, 'dark')
     const retry = [...mounted.container.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent === mounted.labels.sidechainRetry)!
     expect(retry).toBeDefined()
@@ -382,6 +447,7 @@ describe('native Sidechain theme and accessibility guard', () => {
     const user = userEvent.setup()
     await settle()
     assertNormalGeometry(mounted.container.querySelector<HTMLElement>('[data-sidechain-view]')!)
+    assertMappedPaint(mounted.container.querySelector<HTMLElement>('[data-sidechain-transcript-error]')!, PAINT_CONTRACTS.error, 'light')
     const retry = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-transcript-retry]')!
     expect(retry.textContent).toContain(mounted.labels.sidechainRetry)
     expect(keyboardReachable(retry)).toBe(true)
@@ -396,7 +462,7 @@ describe('native Sidechain theme and accessibility guard', () => {
   })
 
   it('names and keyboard-enables submit, preserving the real admission path', async () => {
-    const sendPrompt = vi.fn(async () => true) as SidechainHistory['sendPrompt']
+    const sendPrompt = vi.fn<SidechainHistory['sendPrompt']>(async () => true)
     const mounted = fixture({ theme: 'dark', selectedChildId: 'child', sendPrompt })
     const user = userEvent.setup()
     await settle()
@@ -419,6 +485,13 @@ describe('native Sidechain theme and accessibility guard', () => {
       'check keyboard',
       expect.any(AbortSignal),
     )
+    sendPrompt.mockResolvedValue(false)
+    await user.type(input, 'failure')
+    await user.keyboard('{Enter}')
+    await settle()
+    const promptError = mounted.container.querySelector<HTMLElement>('[data-sidechain-composer] [role="alert"]')!
+    expect(promptError).not.toBeNull()
+    assertMappedPaint(promptError, PAINT_CONTRACTS.promptError, 'dark')
     unmount(mounted.root, mounted.container)
     mounted.themeRoot.remove()
   })
