@@ -33,6 +33,19 @@ describe('built-in tab registrations', () => {
     )
   })
 
+  it('registers exactly one Sidechain descriptor when shared runtime deps are supplied', () => {
+    const { service, dispose } = setup({
+      sidechain: { controller: {} as never, history: {} as never },
+    })
+    expect(service.getTabs().map(tab => tab.id).sort()).toEqual(
+      ['browser', 'diff', 'editor', 'git', 'sidechain', 'subagent', 'terminal'],
+    )
+    expect(service.getTab('sidechain')?.order).toBe(35)
+    expect(service.getTab('sidechain')?.single).toBe(true)
+    dispose()
+    expect(service.getTab('sidechain')).toBeUndefined()
+  })
+
   it('only diff is hidden from the + menu; editor is the visible files window (order 10)', () => {
     const { service } = setup()
     expect(service.getTabs().filter(t => t.hidden).map(t => t.id)).toEqual(['diff'])

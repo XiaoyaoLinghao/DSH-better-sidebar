@@ -15,6 +15,7 @@ import { allLeaves, createSidebarStore, isAgentTabId } from './state.ts'
 import { createBetterSidebarService, matchUrlTarget } from './service.ts'
 import { revalidateChunksOnReactivate, setChunkModuleSystem } from './chunk-loader.ts'
 import { registerBuiltins } from './builtins/index.ts'
+import { createSidechainClientRuntime } from './sidechain/index.tsx'
 import { Sidebar } from './Sidebar.tsx'
 import { RenderBoundary } from './RenderBoundary.tsx'
 import { registerOpenPathInterception, registerTurnTailInterception } from './intercept.tsx'
@@ -68,6 +69,15 @@ export function apply(ctx: Context): void {
   // are ready by the time the sidebar renders.
   const service = createBetterSidebarService(sidebarStore)
   ctx.provide('betterSidebar', service)
+  // Sidechain owns one activation-scoped controller/history pair. Create it
+  // after the service/store exist but before builtins registers the descriptor;
+  // the runtime disposer is registered first so builtins tears down its
+  // descriptor before the shared dependencies on fiber disposal.
+  const sidechainRuntime = createSidechainClientRuntime(ctx, service, sidebarStore)
+  ctx.effect(
+    () => () => { sidechainRuntime.dispose() },
+    'dsh-better-sidebar: sidechain runtime',
+  )
   // Terminal tab titles use the host's effective shell name (e.g. bash/zsh)
   // instead of "Terminal 1". Start with a safe fallback and replace it as
   // soon as the host shell info resolves. Tabs created before the response
@@ -92,7 +102,10 @@ export function apply(ctx: Context): void {
   // service (eating our own dogfood). The disposer unregisters them on
   // fiber disposal (HMR-safe).
   ctx.effect(
-    () => registerBuiltins(ctx, service, { terminalTitle: () => terminalTitle }),
+    () => registerBuiltins(ctx, service, {
+      terminalTitle: () => terminalTitle,
+      sidechain: sidechainRuntime.tab,
+    }),
     'dsh-better-sidebar: register built-in tabs and viewers',
   )
   // A failure anywhere in the client lifecycle must never take the app down

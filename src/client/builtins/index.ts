@@ -10,6 +10,7 @@ import type { Context } from '../../context-types.ts'
 import type { BetterSidebarService } from '../service.ts'
 import { builtinTabs, type BuiltinTabOptions } from './tabs.tsx'
 import { builtinViewers } from './viewers.tsx'
+import { createSidechainTab } from '../sidechain/register.tsx'
 
 /**
  * Register all built-in tabs and viewers with the service. Returns a
@@ -25,6 +26,9 @@ export function registerBuiltins(
   const disposers: (() => void)[] = []
   for (const tab of builtinTabs(ctx, options)) {
     disposers.push(service.registerTab(tab))
+  }
+  if (options.sidechain !== undefined) {
+    disposers.push(service.registerTab(createSidechainTab(options.sidechain)))
   }
   for (const viewer of builtinViewers()) {
     disposers.push(service.registerFileViewer(viewer))

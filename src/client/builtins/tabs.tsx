@@ -24,6 +24,7 @@ import type { ComponentType } from 'react'
 import type { SessionScope } from '../api.ts'
 import type { SidebarStore } from '../state.ts'
 import type { TabDescriptor } from '../service.ts'
+import type { SidechainTabOptions } from '../sidechain/register.tsx'
 
 /**
  * Lazy wrapper over the terminal view: xterm (and its stylesheet) is fetched
@@ -56,6 +57,8 @@ export const TERMINAL_LIMIT = 3
 export interface BuiltinTabOptions {
   /** Returns the display title for newly opened terminal tabs. */
   terminalTitle?: () => string
+  /** Activation-scoped dependencies for the native Sidechain tab. */
+  sidechain?: SidechainTabOptions
 }
 
 /** A client-side uuid for terminal tab identity (not shown in the UI). */
