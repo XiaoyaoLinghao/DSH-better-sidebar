@@ -78,8 +78,8 @@ describe('SidechainView list shell', () => {
     const sessionFeed = feed({
       current: 'parent', byId: {},
       subagentsByParent: {
-        parent: catalog({ entries: [child('same', 'continuable', 'running')] }),
-        other: catalog({ entries: [child('same', 'continuable', 'running')] }),
+        parent: catalog({ entries: [{ ...child('same', 'continuable', 'running'), label: 'parent A row' }] }),
+        other: catalog({ entries: [{ ...child('same', 'continuable', 'running'), label: 'parent B row' }] }),
       },
     })
     const fetchActivity = vi.fn(async (address: SidebarSubagentAddress) =>
@@ -105,7 +105,8 @@ describe('SidechainView list shell', () => {
     act(() => { root.render(renderView(next)) })
     const switchCommits = commits.slice(commitsBeforeSwitch)
     expect(switchCommits.length).toBeGreaterThan(0)
-    expect(switchCommits.some(text => !text.includes('old parent line'))).toBe(true)
+    expect(switchCommits[0]).toContain('parent B row')
+    expect(switchCommits[0]).not.toContain('old parent line')
     unmount(root, container)
   })
 
