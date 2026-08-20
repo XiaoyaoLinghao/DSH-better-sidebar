@@ -179,6 +179,7 @@ function ToolTranscriptRow({
         open={open}
         expandable={expandable}
         expandOnRowClick={expandable}
+        keepContentWhenOpen
         onToggle={() => { setOpen(value => !value) }}
         collapsedContent={(
           <>
@@ -271,10 +272,19 @@ export function TranscriptRows({ rows, streaming, fileMentions, labels }: Transc
       },
     }
   }, [fileMentions, labels.sidechainOpenFile])
+  const occurrences = new Map<string, number>()
   return (
     <div className={styles.transcript} data-transcript-rows role="list">
       {rows.map((row, index) => (
-        <div role="listitem" key={`${row.kind}:${row.seq}:${index}`}>
+        <div
+          role="listitem"
+          key={(() => {
+            const base = `${row.kind}:${row.seq}`
+            const occurrence = occurrences.get(base) ?? 0
+            occurrences.set(base, occurrence + 1)
+            return `${base}:${occurrence}`
+          })()}
+        >
           <TranscriptRowView
             row={row}
             rowStreaming={streaming && index === rows.length - 1}

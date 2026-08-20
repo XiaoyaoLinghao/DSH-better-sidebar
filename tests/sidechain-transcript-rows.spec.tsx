@@ -10,12 +10,12 @@ import type { MarkdownFileMentions } from '@deepseek-ai/dsh-client-ui-primitives
 
 ;(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
 
-function mount(node: ReactNode): { container: HTMLDivElement; root: Root } {
+function mount(node: ReactNode): { container: HTMLDivElement; root: Root; rerender: (next: ReactNode) => void } {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
   act(() => { root.render(node) })
-  return { container, root }
+  return { container, root, rerender: next => { act(() => { root.render(next) }) } }
 }
 
 function unmount(root: Root, container: HTMLElement): void {
@@ -117,19 +117,27 @@ describe('TranscriptRows', () => {
   })
 
   it('marks only the final row as streaming and leaves settled earlier rows interactive', () => {
+    const opened: string[] = []
+    const current = labels()
     const { container, root } = mount(createElement(TranscriptRows, {
       rows: [
-        { kind: 'assistant', seq: 1, text: 'Settled answer' },
+        { kind: 'assistant', seq: 1, text: 'Settled answer `src/a.ts`' },
         { kind: 'tool', seq: 2, name: 'read', failed: false, detail: { arguments: '{"path":"src/a.ts"}' } },
         { kind: 'assistant', seq: 3, text: 'Live answer' },
       ],
-      streaming: true, labels: labels(), fileMentions: mentionFor([]),
+      streaming: true, labels: current, fileMentions: mentionFor(opened),
     }))
     expect(container.querySelectorAll('[data-streaming="true"]')).toHaveLength(1)
     expect(container.querySelector('[data-transcript-kind="assistant"][data-streaming="true"]')?.textContent)
       .toContain('Live answer')
     expect(container.querySelector('[data-transcript-kind="assistant"][data-streaming="false"]')?.textContent)
       .toContain('Settled answer')
+    const historicalMention = container.querySelector<HTMLButtonElement>(
+      `button[aria-label="${current.sidechainOpenFile}: src/a.ts"]`,
+    )
+    expect(historicalMention).not.toBeNull()
+    act(() => { historicalMention!.click() })
+    expect(opened).toEqual(['src/a.ts'])
     expect(container.querySelector('[data-transcript-kind="tool"] [role="button"]')?.getAttribute('aria-expanded'))
       .toBe('false')
     unmount(root, container)
@@ -156,13 +164,23 @@ describe('TranscriptRows', () => {
     const error = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { container, root } = mount(createElement(TranscriptRows, {
       rows: [
-        { kind: 'tool', seq: 4, name: 'read', failed: false, detail: { arguments: '{"path":"a"}' } },
+        {
+          kind: 'tool', seq: 4, name: 'read', failed: false,
+          detail: {
+            arguments: '{"path":"a"}',
+            resultView: { card: 'generic', content: [{ type: 'text', text: 'Successful result' }] } as never,
+          },
+        },
         { kind: 'tool', seq: 4, name: 'write', failed: true, detail: { arguments: '{"path":"b"}', error: { name: 'Failed', code: 'EIO' } } },
       ], streaming: false, labels: labels(), fileMentions: undefined,
     }))
     expect(container.querySelectorAll('[data-transcript-kind="tool"]')).toHaveLength(2)
     expect(container.textContent).toContain(labels().sidechainToolFailed)
-    expect(error.mock.calls.some(call => String(call[0]).toLowerCase().includes('duplicate key'))).toBe(false)
+    const success = container.querySelector<HTMLElement>('[data-transcript-kind="tool"] [role="button"]')
+    expect(success).not.toBeNull()
+    act(() => { success!.click() })
+    expect(container.textContent).toContain('Successful result')
+    expect(error.mock.calls.some(call => String(call[0]).includes('Encountered two children with the same key'))).toBe(false)
     error.mockRestore()
     unmount(root, container)
   })
@@ -186,13 +204,12 @@ describe('TranscriptRows', () => {
     unmount(root, container)
   })
 
-  it('prefers curated tool input and caps raw argument previews before parsing', () => {
-    const long = JSON.stringify({ path: 'x'.repeat(3000) })
+  it('prefers curated tool input over raw arguments', () => {
     const { container, root } = mount(createElement(TranscriptRows, {
       rows: [{
         kind: 'tool', seq: 1, name: 'read', failed: false,
         detail: {
-          arguments: long,
+          arguments: '{"path":"raw.ts"}',
           callView: { card: 'generic', title: 'Read file', rawInput: { path: 'curated.ts' } } as never,
         },
       }],
@@ -203,6 +220,45 @@ describe('TranscriptRows', () => {
     const preview = container.querySelector('[data-transcript-kind="tool"] pre')?.textContent ?? ''
     expect(preview).toContain('curated.ts')
     expect(preview).not.toContain('x'.repeat(3000))
+    unmount(root, container)
+  })
+
+  it('caps raw arguments before parsing and keeps a long fallback tail out of the DOM', () => {
+    const long = JSON.stringify({ path: `${'x'.repeat(2100)}-tail-sentinel` })
+    const { container, root } = mount(createElement(TranscriptRows, {
+      rows: [{ kind: 'tool', seq: 1, name: 'read', failed: false, detail: { arguments: long } }],
+      streaming: false, labels: labels(), fileMentions: undefined,
+    }))
+    const disclosure = container.querySelector<HTMLElement>('[data-transcript-kind="tool"] [role="button"]')!
+    act(() => { disclosure.click() })
+    const preview = container.querySelector('[data-transcript-kind="tool"] pre')?.textContent ?? ''
+    expect(preview.length).toBeLessThanOrEqual(2000)
+    expect(preview).not.toContain('tail-sentinel')
+    unmount(root, container)
+  })
+
+  it('preserves expanded reasoning and tool rows when a different base row is inserted', () => {
+    const current = labels()
+    const initialRows: readonly TranscriptRow[] = [
+      { kind: 'reasoning', seq: 10, text: 'Reasoning body' },
+      { kind: 'tool', seq: 20, name: 'read', failed: false, detail: { arguments: '{"path":"a"}' } },
+    ]
+    const { container, root, rerender } = mount(createElement(TranscriptRows, {
+      rows: initialRows, streaming: false, labels: current, fileMentions: undefined,
+    }))
+    const initialDisclosures = [...container.querySelectorAll<HTMLElement>('[data-transcript-kind] [role="button"]')]
+    expect(initialDisclosures).toHaveLength(2)
+    act(() => { initialDisclosures.forEach(disclosure => disclosure.click()) })
+    expect(initialDisclosures.every(disclosure => disclosure.getAttribute('aria-expanded') === 'true')).toBe(true)
+    rerender(createElement(TranscriptRows, {
+      rows: [
+        { kind: 'user', seq: 1, text: 'Inserted before existing rows' },
+        ...initialRows,
+      ], streaming: false, labels: current, fileMentions: undefined,
+    }))
+    const nextDisclosures = [...container.querySelectorAll<HTMLElement>('[data-transcript-kind] [role="button"]')]
+    expect(nextDisclosures).toHaveLength(2)
+    expect(nextDisclosures.every(disclosure => disclosure.getAttribute('aria-expanded') === 'true')).toBe(true)
     unmount(root, container)
   })
 })
