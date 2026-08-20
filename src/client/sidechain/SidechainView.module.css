@@ -113,3 +113,176 @@
   background: var(--dsw-alias-button-primary-fill);
   vertical-align: -0.15em;
 }
+
+/* Sidechain catalog shell. Keep this a normal tab surface: the sidebar owns
+   panel geometry, stacking, and responsive behavior. */
+.sidechain {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidechainHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--dsw-alias-line-light);
+}
+
+.sidechainTitle,
+.sidechainHeaderTitle {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font: var(--dsw-font-xs-13);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidechainRefresh,
+.sidechainBack {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  font: var(--dsw-font-xxs-12);
+}
+
+.sidechainRefresh {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+.sidechainBack {
+  padding: 4px 6px;
+}
+
+.sidechainRefresh:hover,
+.sidechainRefresh:focus-visible,
+.sidechainBack:hover,
+.sidechainBack:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidechainBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+}
+
+.sidechainRow {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 50px;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidechainRow:hover,
+.sidechainRow:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.sidechainDot {
+  flex: 0 0 auto;
+}
+
+.sidechainRowContent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.sidechainRowLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--dsw-font-xs-13);
+}
+
+.sidechainRowSecondary,
+.sidechainActivity,
+.sidechainDiagnostic,
+.sidechainEmpty,
+.sidechainError,
+.sidechainDetail {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidechainRowSecondary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidechainActivity {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidechainEmpty,
+.sidechainError,
+.sidechainDetail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 80px;
+  padding: 16px;
+  text-align: center;
+}
+
+.sidechainError {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.sidechainErrorDetail {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidechainError button {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.sidechainDiagnostic {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+}
