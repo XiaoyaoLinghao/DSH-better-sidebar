@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -53,9 +54,14 @@ describe('verification script scratch safety', () => {
       expect(marker.version).toBe(1)
       expect(marker.token).toBe(owned.token)
       expect(typeof owned.token).toBe('string')
+      const removed = invoke('remove', owned.scratch, base, root, 'dsh-safety.', owned.token)
+      expect(removed.status).toBe(0)
+      const quarantine = JSON.parse(removed.stdout).quarantine as string
+      expect(existsSync(quarantine)).toBe(true)
+      expect(existsSync(join(quarantine, '.dsh-verification-owner.json'))).toBe(true)
+      expect(existsSync(join(quarantine, `.dsh-verification-receipt-${createHash('sha256').update(owned.token).digest('hex')}.json`))).toBe(true)
       expect(invoke('remove', owned.scratch, base, root, 'dsh-safety.', owned.token).status).toBe(0)
-      expect(invoke('remove', owned.scratch, base, root, 'dsh-safety.', owned.token).status).toBe(0)
-      expect(existsSync(join(base, '.dsh-verification-receipts'))).toBe(false)
+      expect(existsSync(owned.scratch)).toBe(false)
       const recreated = createOwned(base, root)
       expect(invoke('remove', recreated.scratch, base, root, 'dsh-safety.', recreated.token).status).toBe(0)
       mkdirSync(recreated.scratch)
@@ -155,16 +161,43 @@ describe('verification script scratch safety', () => {
       const owned = createOwned(base, root)
       const moved = join(base, 'moved-original')
       mkdirSync(pause)
-      const remover = invokeAsync(['remove', owned.scratch, base, root, 'dsh-safety.', owned.token], { DSH_SAFE_TEMP_PAUSE_DIR: pause })
-      for (let attempt = 0; attempt < 40 && !existsSync(join(pause, 'ready')); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
-      expect(existsSync(join(pause, 'ready'))).toBe(true)
+      const pauseToken = randomBytes(32).toString('hex')
+      const remover = invokeAsync(['remove-test', owned.scratch, base, root, 'dsh-safety.', owned.token, pause, pauseToken])
+      for (let attempt = 0; attempt < 40 && !existsSync(join(pause, `ready.validated.${pauseToken}`)); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(existsSync(join(pause, `ready.validated.${pauseToken}`))).toBe(true)
       renameSync(owned.scratch, moved)
       mkdirSync(owned.scratch)
-      writeFileSync(join(pause, 'go'), 'go')
+      writeFileSync(join(pause, `go.validated.${pauseToken}`), 'go')
       await new Promise<void>((resolve) => remover.once('exit', () => resolve()))
       expect(remover.exitCode).not.toBe(0)
       expect(existsSync(owned.scratch)).toBe(true)
       expect(existsSync(moved)).toBe(true)
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps both paths recoverable when a watcher swaps the boundary after quarantine validation', async () => {
+    const { sandbox, root, base } = createSandbox()
+    const pause = join(sandbox, 'pause-boundary')
+    try {
+      const owned = createOwned(base, root)
+      const pauseToken = randomBytes(32).toString('hex')
+      const remover = invokeAsync(['remove-test', owned.scratch, base, root, 'dsh-safety.', owned.token, pause, pauseToken])
+      let stdout = ''
+      remover.stdout?.on('data', (chunk) => { stdout += String(chunk) })
+      for (let attempt = 0; attempt < 80 && !existsSync(join(pause, `ready.validated.${pauseToken}`)); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(existsSync(join(pause, `ready.validated.${pauseToken}`))).toBe(true)
+      writeFileSync(join(pause, `go.validated.${pauseToken}`), 'go')
+      for (let attempt = 0; attempt < 80 && !existsSync(join(pause, `ready.boundary.${pauseToken}`)); attempt++) await new Promise((resolve) => setTimeout(resolve, 25))
+      expect(existsSync(join(pause, `ready.boundary.${pauseToken}`))).toBe(true)
+      mkdirSync(owned.scratch)
+      writeFileSync(join(pause, `go.boundary.${pauseToken}`), 'go')
+      await new Promise<void>((resolve) => remover.once('exit', () => resolve()))
+      expect(remover.exitCode).toBe(0)
+      const quarantine = JSON.parse(stdout).quarantine as string
+      expect(existsSync(owned.scratch)).toBe(true)
+      expect(existsSync(quarantine)).toBe(true)
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }
@@ -177,5 +210,36 @@ describe('verification script scratch safety', () => {
     expect(script).toContain('@deepseek-ai/dsh@0.1.0-rc.8')
     expect(script).not.toContain('for candidate in "$ROOT"/dsh-better-sidebar-*.tgz')
     expect(readFileSync(resolve(process.cwd(), 'scripts/safe-temp.mjs'), 'utf8')).toContain('SIGKILL')
+  })
+
+  it('keeps production remove immune to pause-hook environment variables', () => {
+    const { sandbox, root, base } = createSandbox()
+    const pause = join(sandbox, 'pause')
+    try {
+      const owned = createOwned(base, root)
+      const result = spawnSync(process.execPath, [helper, 'remove', owned.scratch, base, root, 'dsh-safety.', owned.token], {
+        env: { ...process.env, NODE_ENV: 'test', DSH_SAFE_TEMP_PAUSE_DIR: pause }, encoding: 'utf8',
+      })
+      expect(result.status).toBe(0)
+      expect(existsSync(pause)).toBe(false)
+      const disabledOwner = createOwned(base, root)
+      const pauseToken = randomBytes(32).toString('hex')
+      const disabled = spawnSync(process.execPath, [helper, 'remove-test', disabledOwner.scratch, base, root, 'dsh-safety.', disabledOwner.token, pause, pauseToken], {
+        env: { ...process.env, NODE_ENV: 'production' }, encoding: 'utf8',
+      })
+      expect(disabled.status).not.toBe(0)
+      expect(existsSync(disabledOwner.scratch)).toBe(true)
+      expect(invoke('remove', disabledOwner.scratch, base, root, 'dsh-safety.', disabledOwner.token).status).toBe(0)
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
+  it('contains no recursive deletion API in the cleanup helper', () => {
+    const source = readFileSync(resolve(process.cwd(), 'scripts/safe-temp.mjs'), 'utf8')
+    expect(source).not.toContain('rmSync')
+    expect(source).not.toContain('rm -rf')
+    expect(source).toContain('stat.dev.toString()')
+    expect(source).toContain('stat.ino.toString()')
   })
 })

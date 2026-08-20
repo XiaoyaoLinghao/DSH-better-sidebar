@@ -17,8 +17,8 @@
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
-#                  新建本调用拥有的独立子目录，只写入/删除该子目录；调用方
-#                  提供的目录本身（可能是真实 ~/.dsh）绝不写入或删除。
+#                  新建本调用拥有的独立子目录，只写入并在结束时隔离该子目录；调用方
+#                  提供的目录本身（可能是真实 ~/.dsh）绝不写入或删除。隔离目录需手动回收。
 #   KEEP_HOME      非空时保留 scratch home（调试用）
 #
 # 退出码 = playwright 的退出码；服务器与 scratch 目录由 trap 兜底清理。
@@ -88,8 +88,11 @@ cleanup() {
     wait "$LAUNCHER_PID" 2>/dev/null || true
   fi
   if [ -z "${KEEP_HOME:-}" ]; then
-    if ! node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN"; then
+    QUARANTINE_RESULT="$(node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN" 2>&1)" || {
       warn "scratch 安全校验失败，拒绝删除：$SCRATCH"
+    }
+    if [ -n "$QUARANTINE_RESULT" ]; then
+      say "scratch 已隔离，未删除；请按输出路径手动回收：$QUARANTINE_RESULT"
     fi
   else
     warn "KEEP_HOME 已设置，保留 $SCRATCH"

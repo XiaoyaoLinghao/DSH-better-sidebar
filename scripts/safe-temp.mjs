@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
+// Scratch cleanup is deliberately non-destructive: owned directories are
+// atomically quarantined and left for explicit OS-temp reclamation.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { execFileSync, spawn } from 'node:child_process'
+import os from 'node:os'
 import path from 'node:path'
 
 const VERSION = 1
@@ -102,16 +105,17 @@ function assertRecord(record, expected) {
 
 function identityFor(value, label = 'scratch') {
   const canonical = fs.realpathSync.native(absolute(value, label))
-  const stat = fs.statSync(canonical)
-  return { realpath: canonical, dev: Number(stat.dev) || 0, ino: Number(stat.ino) || 0 }
+  const stat = fs.statSync(canonical, { bigint: true })
+  const dev = stat.dev.toString()
+  const ino = stat.ino.toString()
+  return { realpath: canonical, dev, ino, supported: dev !== '0' && ino !== '0' }
 }
 
 function sameIdentity(actual, expected, requirePath = false) {
   if (!actual || !expected) return false
   if (requirePath && actual.realpath !== expected.realpath) return false
-  if (actual.dev && expected.dev && actual.dev !== expected.dev) return false
-  if (actual.ino && expected.ino && actual.ino !== expected.ino) return false
-  return Boolean((actual.dev && expected.dev && actual.dev === expected.dev && actual.ino && expected.ino && actual.ino === expected.ino) || actual.realpath === expected.realpath)
+  if (!actual.supported || !expected.supported) return false
+  return actual.dev === expected.dev && actual.ino === expected.ino
 }
 
 function quarantinePath(base, prefix, token) {
@@ -122,16 +126,19 @@ function quarantinePath(base, prefix, token) {
   fail('could not allocate a quarantine path')
 }
 
-function pauseAfterValidation() {
-  if (process.env.NODE_ENV !== 'test' || !process.env.DSH_SAFE_TEMP_PAUSE_DIR) return
-  const pause = absolute(process.env.DSH_SAFE_TEMP_PAUSE_DIR, 'test pause directory')
+function pauseAfterValidation(root, pauseArg, pauseToken, stage) {
+  if (process.env.NODE_ENV !== 'test') fail('test pause command requires NODE_ENV=test')
+  assertToken(pauseToken)
+  const pause = absolute(pauseArg, 'test pause directory')
+  const tempRoot = fs.realpathSync.native(os.tmpdir())
   const parent = canonicalExisting(path.dirname(pause), 'test pause parent')
   const pauseCanonical = canonicalMaybeMissing(pause, 'test pause directory')
-  if (!withinOrEqual(pauseCanonical, parent)) fail('test pause directory escapes temporary directory')
+  if (!withinOrEqual(pauseCanonical, tempRoot) || withinOrEqual(pauseCanonical, root) || withinOrEqual(root, pauseCanonical)) fail('test pause directory is outside temporary root')
+  if (!withinOrEqual(pauseCanonical, parent)) fail('test pause directory escapes temporary parent')
   fs.mkdirSync(pause, { recursive: true })
-  writeExclusive(path.join(pause, 'ready'), { version: VERSION }, 0o600)
+  writeExclusive(path.join(pause, `ready.${stage}.${pauseToken}`), { version: VERSION }, 0o600)
   const deadline = Date.now() + 10_000
-  while (!fs.existsSync(path.join(pause, 'go'))) {
+  while (!fs.existsSync(path.join(pause, `go.${stage}.${pauseToken}`))) {
     if (Date.now() > deadline) fail('test pause timed out')
     const wait = new Int32Array(new SharedArrayBuffer(4))
     Atomics.wait(wait, 0, 0, 20)
@@ -178,7 +185,7 @@ function create(baseArg, rootArg, prefix) {
         fs.renameSync(scratch, quarantine)
         const quarantined = identityFor(quarantine)
         if (!sameIdentity(quarantined, createdIdentity)) fail(`setup quarantine identity mismatch: ${quarantine}`)
-        fs.rmSync(quarantine, { recursive: true, force: true })
+        console.error(`[safe-temp] setup scratch quarantined for manual reclamation: ${quarantine}`)
       } catch (cleanupError) {
         console.error(`[safe-temp] setup cleanup refused; recover scratch manually: ${scratch} (${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)})`)
       }
@@ -206,16 +213,17 @@ function ownership(scratchArg, baseArg, rootArg, prefix, token, requirePresent =
   const markerRecord = readJsonFile(path.join(scratchRequested, MARKER_NAME), 'ownership marker')
   if (markerRecord?.version !== VERSION || typeof markerRecord?.base !== 'string' || typeof markerRecord?.root !== 'string' || typeof markerRecord?.scratch !== 'string' || typeof markerRecord?.prefix !== 'string' || !markerRecord.identity) fail('ownership marker has invalid fields')
   const identity = identityFor(scratch)
+  if (!identity.supported) fail('stable scratch identity unavailable; refusing quarantine')
   assertRecord(markerRecord, { version: VERSION, base, root, scratch, token, prefix, identity })
   const receipt = readJsonFile(receiptPath(scratchRequested, token), 'ownership receipt')
   assertRecord(receipt, { version: VERSION, base, root, scratch, token, prefix, identity })
   return { base, root, scratch, requested: scratchRequested, record: receipt, identity, present: true }
 }
 
-function remove(scratchArg, baseArg, rootArg, prefix, token) {
+function remove(scratchArg, baseArg, rootArg, prefix, token, pauseArg, pauseToken) {
   const owned = ownership(scratchArg, baseArg, rootArg, prefix, token)
   if (!owned.present) return
-  pauseAfterValidation()
+  if (pauseArg !== undefined || pauseToken !== undefined) pauseAfterValidation(owned.root, pauseArg, pauseToken, 'validated')
   let quarantine
   try {
     quarantine = quarantinePath(owned.base, prefix, token)
@@ -231,7 +239,8 @@ function remove(scratchArg, baseArg, rootArg, prefix, token) {
     if (!sameIdentity(identity, owned.identity)) fail(`quarantine identity mismatch: ${quarantine}`)
     const marker = readJsonFile(path.join(quarantine, MARKER_NAME), 'quarantine marker')
     assertRecord(marker, { ...owned.record, scratch: owned.record.scratch, identity: owned.identity })
-    fs.rmSync(quarantine, { recursive: true, force: true })
+    if (pauseArg !== undefined || pauseToken !== undefined) pauseAfterValidation(owned.root, pauseArg, pauseToken, 'boundary')
+    process.stdout.write(`${JSON.stringify({ quarantine })}\n`)
   } catch (error) {
     let recovery = quarantine
     if (!fs.existsSync(owned.requested)) {
@@ -312,6 +321,7 @@ function usage() {
   console.error(`usage: safe-temp.mjs
   create <base> <root> <prefix>
   remove <scratch> <base> <root> <prefix> <token>
+  remove-test <scratch> <base> <root> <prefix> <token> <pause-dir> <pause-token>
   link <target> <link> <scratch> <base> <root> <prefix> <token>
   launch <pid-file> <log-file> <command> [args...]
   terminate <pid>`)
@@ -322,6 +332,7 @@ const [command, ...args] = process.argv.slice(2)
 try {
   if (command === 'create' && args.length === 3) create(...args)
   else if (command === 'remove' && args.length === 5) remove(...args)
+  else if (command === 'remove-test' && args.length === 7) remove(...args)
   else if (command === 'link' && args.length === 7) link(...args)
   else if (command === 'launch' && args.length >= 3) await launch(args[0], args[1], args[2], args.slice(3))
   else if (command === 'terminate' && args.length === 1) terminate(args[0])

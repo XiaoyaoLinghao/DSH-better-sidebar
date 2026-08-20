@@ -31,8 +31,11 @@ WORK="$(node -p "JSON.parse(process.argv[1]).scratch" "$WORK_INFO")"
 WORK_TOKEN="$(node -p "JSON.parse(process.argv[1]).token" "$WORK_INFO")"
 cleanup() {
   local code=$?
-  if ! node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' "$WORK_TOKEN"; then
+  local quarantine_result
+  if ! quarantine_result="$(node "$SAFE_TEMP" remove "$WORK" "$TEMP_BASE" "$ROOT" 'dsh-consumer-types.' "$WORK_TOKEN" 2>&1)"; then
     echo "[check-consumer-types] WARNING: scratch cleanup refused; preserving $WORK" >&2
+  elif [ -n "$quarantine_result" ]; then
+    echo "[check-consumer-types] scratch quarantined (not deleted); reclaim manually: $quarantine_result" >&2
   fi
   exit "$code"
 }
