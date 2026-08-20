@@ -104,12 +104,12 @@ async function seedSession(): Promise<void> {
 /** Open the real DSH Settings dialog and select this plugin's Side card. */
 async function openSideCard(page: Page): Promise<ReturnType<Page['locator']>> {
   const settingsButton = page.locator(
-    '[aria-label="Settings"], [title="Settings"], button:has-text("Settings"), a:has-text("Settings")',
+    'button:has([data-slot="settings.trigger"])',
   ).first()
   await expect(settingsButton, 'the DSH shell must expose its Settings entry').toHaveCount(1, { timeout: 30_000 })
   await settingsButton.click()
   const dialog = page.getByRole('dialog').last()
-  const sideCard = dialog.getByRole('button', { name: 'Side card', exact: true })
+  const sideCard = dialog.locator('[data-dsh-better-sidebar-settings-nav]').first()
   await expect(sideCard, 'the plugin must register a Side card settings section').toHaveCount(1, { timeout: 30_000 })
   await sideCard.click()
   const sidechainCard = dialog.locator('button[aria-pressed][title="sidechain"]')

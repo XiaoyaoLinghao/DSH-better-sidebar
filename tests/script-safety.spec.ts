@@ -241,7 +241,7 @@ describe('verification script scratch safety', () => {
     try {
       const pathKey = process.platform === 'win32' ? ';' : ':'
       const result = spawnSync('bash', [resolve(process.cwd(), 'scripts/e2e-mount.sh'), '--probe-default-cli'], {
-        env: { ...process.env, DSH_PROBE_CAPTURE: capture, PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}` },
+        env: { ...process.env, DSH_CMD: '', DSH_PROBE_CAPTURE: capture, PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}` },
         encoding: 'utf8',
       })
       if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
