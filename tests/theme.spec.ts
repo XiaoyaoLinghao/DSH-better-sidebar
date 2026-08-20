@@ -80,3 +80,24 @@ describe('effectiveTokenValue', () => {
     expect(effectiveTokenValue('--probe')).toBe('')
   })
 })
+
+describe('shared sidebar theme fixtures', () => {
+  it.each([
+    ['light', '#1a1a1a', '#ffffff'],
+    ['dark', '#f5f5f5', '#17171c'],
+  ] as const)('keeps the shared paint tokens available in %s mode', (_scheme, label, surface) => {
+    const fixture = document.createElement('div')
+    fixture.dataset.theme = _scheme
+    fixture.style.setProperty('--dsw-alias-label-primary', label)
+    fixture.style.setProperty('--dsw-alias-bg-layer-2', surface)
+    const child = document.createElement('div')
+    child.style.color = 'var(--dsw-alias-label-primary)'
+    child.style.backgroundColor = 'var(--dsw-alias-bg-layer-2)'
+    fixture.append(child)
+    document.body.append(fixture)
+
+    expect(getComputedStyle(child).getPropertyValue('--dsw-alias-label-primary').trim()).toBe(label)
+    expect(getComputedStyle(child).getPropertyValue('--dsw-alias-bg-layer-2').trim()).toBe(surface)
+    fixture.remove()
+  })
+})
