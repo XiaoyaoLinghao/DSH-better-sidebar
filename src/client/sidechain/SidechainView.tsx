@@ -22,6 +22,9 @@ import type {
 } from '../service.ts'
 import { parseSidechainMeta, type SidechainController } from './controller.ts'
 import type { SidechainHistory } from './history.ts'
+import type { SidechainTranscriptSnapshot } from './history.ts'
+import { fileMentionsFor } from './file-mentions.ts'
+import { TranscriptRows } from './TranscriptRows.tsx'
 import { getSidechainLabels, t } from '../locales.ts'
 import css from './SidechainView.module.css'
 
@@ -47,6 +50,12 @@ interface ActivityState {
   lines: Record<string, string>
 }
 
+interface TranscriptState {
+  owner: string | undefined
+  status: 'loading' | 'ready' | 'error'
+  snapshot: SidechainTranscriptSnapshot | undefined
+}
+
 function selectActivityLine(
   activity: { readonly ownerParentSessionId: string | undefined; readonly lines: Readonly<Record<string, string>> },
   parentSessionId: string,
@@ -57,7 +66,7 @@ function selectActivityLine(
 
 /** Native Sidechain page list shell. */
 export function SidechainView(props: SidechainViewProps) {
-  const { ctx, scope, tab, visible, controller, history } = props
+  const { ctx, service, scope, tab, visible, controller, history } = props
   const sessions = ctx.sessions
   const labels = getSidechainLabels()
   const list = useSyncExternalStore<SidebarSessionList>(
@@ -189,9 +198,71 @@ export function SidechainView(props: SidechainViewProps) {
 
   const selected = selectedChildId === undefined
     ? undefined
-    : entries.find((entry): entry is SidebarSubagentChildEntry => entry.kind === 'child' && entry.id === selectedChildId)
+      : entries.find((entry): entry is SidebarSubagentChildEntry => entry.kind === 'child' && entry.id === selectedChildId)
+
+  const selectedKey = selected === undefined ? undefined : `${parentSessionId}:${selected.id}`
+  const [transcript, setTranscript] = useState<TranscriptState>({ owner: undefined, status: 'loading', snapshot: undefined })
+  const transcriptEpoch = useRef(0)
+  const transcriptSelection = useRef<string | undefined>(undefined)
+  const transcriptRetry = useRef(0)
+  const [transcriptRetryNonce, setTranscriptRetryNonce] = useState(0)
+
+  // A transcript belongs to exactly one selected-child lifecycle. The same
+  // epoch guards both timer reads and late promises after selection/hide.
+  useEffect(() => {
+    const epoch = ++transcriptEpoch.current
+    const previousKey = transcriptSelection.current
+    const retryChanged = transcriptRetryNonce !== transcriptRetry.current
+    transcriptRetry.current = transcriptRetryNonce
+    if (!visible || selected === undefined || selectedKey === undefined) return
+    transcriptSelection.current = selectedKey
+
+    const address: SidebarSubagentAddress = {
+      parentSessionId,
+      childSessionId: selected.id,
+      mode: selected.mode,
+    }
+    const abort = new AbortController()
+    let disposed = false
+    let inFlight = false
+    const current = (): boolean => !disposed && transcriptEpoch.current === epoch
+    const read = async (): Promise<void> => {
+      if (!current() || inFlight) return
+      inFlight = true
+      try {
+        const snapshot = await history.fetchTranscript(address, abort.signal)
+        if (current()) setTranscript({ owner: selectedKey, status: 'ready', snapshot })
+      } catch {
+        if (current()) setTranscript(previous => previous.owner === selectedKey
+          ? { owner: selectedKey, status: 'error', snapshot: previous.snapshot }
+          : previous)
+      } finally {
+        inFlight = false
+      }
+    }
+
+    // Initial inactive children are read once. Running children read now and
+    // continue on the local timer; retry always forces one immediate read.
+    setTranscript(previous => previous.owner === selectedKey && previous.snapshot !== undefined
+      ? previous
+      : { owner: selectedKey, status: 'loading', snapshot: undefined })
+    if (previousKey !== selectedKey || retryChanged || selected.activity === 'running') void read()
+    const timer = selected.activity === 'running'
+      ? globalThis.setInterval(() => { void read() }, ACTIVITY_POLL_MS)
+      : undefined
+    return () => {
+      disposed = true
+      transcriptEpoch.current++
+      abort.abort()
+      if (timer !== undefined) globalThis.clearInterval(timer)
+    }
+  }, [history, parentSessionId, selected?.activity, selected?.id, selected?.mode, selectedKey, transcriptRetryNonce, visible])
 
   if (selectedChildId !== undefined && selected !== undefined) {
+    const selectedTranscript = transcript.owner === selectedKey ? transcript : {
+      owner: selectedKey, status: 'loading' as const, snapshot: undefined,
+    }
+    const snapshot = selectedTranscript.snapshot
     return (
       <div className={css.sidechain} data-sidechain-view>
         <div className={css.sidechainHeader}>
@@ -200,9 +271,34 @@ export function SidechainView(props: SidechainViewProps) {
           </button>
           <span className={css.sidechainHeaderTitle}>{childLabel(selected, list)}</span>
         </div>
-        <div className={css.sidechainDetail} data-sidechain-detail aria-busy="true">
-          <span className={css.sidechainLoading}>{labels.sidechainLoading}</span>
-        </div>
+        {selectedTranscript.status === 'loading' && (
+          <div className={css.sidechainDetail} data-sidechain-detail aria-busy="true">
+            <span className={css.sidechainLoading}>{labels.sidechainLoading}</span>
+          </div>
+        )}
+        {selectedTranscript.status === 'error' && (
+          <div className={css.sidechainError} data-sidechain-detail data-sidechain-transcript-error>
+            <span>{labels.sidechainError}</span>
+            <button type="button" data-sidechain-transcript-retry onClick={() => { setTranscriptRetryNonce(value => value + 1) }}>
+              {labels.sidechainRetry}
+            </button>
+          </div>
+        )}
+        {selectedTranscript.status === 'ready' && snapshot !== undefined && snapshot.rows.length === 0 && (
+          <div className={css.sidechainEmpty} data-sidechain-detail data-sidechain-transcript-empty>
+            {labels.sidechainEmpty}
+          </div>
+        )}
+        {selectedTranscript.status === 'ready' && snapshot !== undefined && snapshot.rows.length > 0 && (
+          <div className={css.sidechainTranscript} data-sidechain-detail>
+            <TranscriptRows
+              rows={snapshot.rows}
+              streaming={snapshot.streaming}
+              labels={labels}
+              fileMentions={fileMentionsFor(snapshot.produced, scope.cwd, path => { service.openFile(scope, path) })}
+            />
+          </div>
+        )}
       </div>
     )
   }
