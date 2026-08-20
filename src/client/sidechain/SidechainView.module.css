@@ -1,0 +1,119 @@
+.transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.row {
+  min-width: 0;
+}
+
+.user,
+.assistant {
+  max-width: 100%;
+  width: fit-content;
+  padding: 6px 10px;
+  border-radius: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.user {
+  align-self: flex-start;
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.assistant {
+  align-self: flex-start;
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.disclosure {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.disclosureBody {
+  max-height: 240px;
+  margin: 4px 0 4px 22px;
+  padding: 8px 10px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.summary {
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.separator {
+  display: inline-block;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+  vertical-align: middle;
+}
+
+.tool {
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}
+
+.toolBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 4px 22px;
+  min-width: 0;
+}
+
+.toolInput,
+.toolOutput {
+  max-height: 240px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.toolFailure {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.streaming {
+  position: relative;
+}
+
+.streamingMarker {
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 4px;
+  border-radius: 1px;
+  background: var(--dsw-alias-button-primary-fill);
+  vertical-align: -0.15em;
+}
