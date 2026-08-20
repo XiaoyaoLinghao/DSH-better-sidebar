@@ -13,7 +13,7 @@
 #   bash scripts/e2e-mount.sh [--grep <playwright-filter>]
 #
 # 环境变量（均可省略）：
-#   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 npx 拉官方包
+#   DSH_CMD        dsh 命令；缺省 PATH 上的 `dsh`，回退 pnpm dlx 拉 rc8
 #   TARBALL        插件 tarball；未显式提供时自动 build + pack 到 scratch
 #   PORT           固定端口（默认 0 = OS 分配，从日志解析 URL）
 #   DSH_HOME_BASE  覆盖 scratch 根目录（默认系统临时目录）。脚本始终在其下
@@ -21,7 +21,7 @@
 #                  提供的目录本身（可能是真实 ~/.dsh）绝不写入或删除。隔离目录需手动回收。
 #   KEEP_HOME      非空时保留 scratch home（调试用）
 #
-# 退出码 = playwright 的退出码；服务器与 scratch 目录由 trap 兜底清理。
+# 退出码 = playwright 的退出码；服务器与 scratch 隔离由 trap 兜底处理。
 # =============================================================================
 set -euo pipefail
 
@@ -43,29 +43,25 @@ die()  { printf '\033[31m[e2e-mount]\033[0m %s\n' "$*" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || die "未找到 node（DSH 运行需要 Node.js >= 20）"
 command -v pnpm >/dev/null 2>&1 || die "未找到 pnpm（dsh plugin 转发给 pnpm）"
 
-# dsh CLI 解析：PATH 上的 dsh 优先，否则 npx 拉官方包（同 scripts/install.sh）
+# dsh CLI 解析：PATH 上的 dsh 优先，否则使用已验证可用的 pnpm dlx。
 if ! command -v "$DSH_CMD" >/dev/null 2>&1; then
-  if command -v npx >/dev/null 2>&1; then
-    say "PATH 上无 $DSH_CMD，回退 npx -y --package @deepseek-ai/dsh@0.1.0-rc.8"
-    DSH_MODE=npx
-  else
-    die "未找到 $DSH_CMD 或 npx；请先安装 DSH CLI（npm i -g @deepseek-ai/dsh）或用 DSH_CMD 指定"
-  fi
+  say "PATH 上无 $DSH_CMD，回退 pnpm dlx @deepseek-ai/dsh@0.1.0-rc.8"
+  DSH_MODE=pnpm
 else
   DSH_MODE=path
 fi
 
 run_dsh() {
-  if [ "$DSH_MODE" = npx ]; then
-    npx -y --package "@deepseek-ai/dsh@0.1.0-rc.8" dsh "$@"
+  if [ "$DSH_MODE" = pnpm ]; then
+    pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh "$@"
   else
     "$DSH_CMD" "$@"
   fi
 }
 
 # scratch home（每次全新，绝不触碰真实 ~/.dsh）：调用方给了 DSH_HOME_BASE
-# 时，只在其下新建本调用拥有的子目录并只删除该子目录；缺省时直接用系统
-# 临时目录。
+# 时，只在其下新建本调用拥有的子目录并只隔离该子目录；缺省时直接用系统
+# 临时目录（隔离目录不会由脚本删除）。
 TEMP_BASE="${DSH_HOME_BASE:-}"
 if [ -z "$TEMP_BASE" ]; then TEMP_BASE="$(node -p "require('node:os').tmpdir()")"; fi
 SCRATCH_INFO="$(node "$SAFE_TEMP" create "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.')" \
@@ -88,11 +84,14 @@ cleanup() {
     wait "$LAUNCHER_PID" 2>/dev/null || true
   fi
   if [ -z "${KEEP_HOME:-}" ]; then
-    QUARANTINE_RESULT="$(node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN" 2>&1)" || {
-      warn "scratch 安全校验失败，拒绝删除：$SCRATCH"
-    }
-    if [ -n "$QUARANTINE_RESULT" ]; then
-      say "scratch 已隔离，未删除；请按输出路径手动回收：$QUARANTINE_RESULT"
+    if QUARANTINE_RESULT="$(node "$SAFE_TEMP" remove "$SCRATCH" "$TEMP_BASE" "$ROOT" 'dsh-e2e-mount.' "$SCRATCH_TOKEN" 2>&1)"; then
+      if QUARANTINE_PATH="$(node -p "JSON.parse(process.argv[1]).quarantine" "$QUARANTINE_RESULT" 2>/dev/null)"; then
+        say "scratch 已隔离，未删除；请手动回收：$QUARANTINE_PATH"
+      else
+        warn "scratch cleanup 返回了无法解析的结果，已保留：$QUARANTINE_RESULT"
+      fi
+    else
+      warn "scratch 安全校验失败，拒绝隔离：$QUARANTINE_RESULT"
     fi
   else
     warn "KEEP_HOME 已设置，保留 $SCRATCH"
@@ -180,8 +179,8 @@ say "挂载已注册：dsh.profile.bundles 包含 dsh-better-sidebar"
 
 # 步骤 4：启动 dsh web（--port 0 = OS 分配，避免端口冲突；keyless 可起）
 say "启动 dsh web（port=${PORT}）..."
-if [ "$DSH_MODE" = npx ]; then
-  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" npx -y --package "@deepseek-ai/dsh@0.1.0-rc.8" dsh web --port "$PORT" &
+if [ "$DSH_MODE" = pnpm ]; then
+  node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" pnpm dlx "@deepseek-ai/dsh@0.1.0-rc.8" dsh web --port "$PORT" &
 else
   node "$SAFE_TEMP" launch "$PID_FILE" "$WEB_LOG" "$DSH_CMD" web --port "$PORT" &
 fi
