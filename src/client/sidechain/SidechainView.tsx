@@ -32,7 +32,7 @@ import css from './SidechainView.module.css'
 const ACTIVITY_POLL_MS = 3000
 const CONFIRMATION_POLL_MS = 250
 const CONFIRMATION_MAX_ATTEMPTS = 8
-const TRANSCRIPT_POLL_MS = 1000
+const TRANSCRIPT_POLL_MS = 3000
 const EMPTY_ENTRIES: readonly CatalogEntry[] = []
 
 export interface SidechainViewProps {
@@ -352,26 +352,32 @@ export function SidechainView(props: SidechainViewProps) {
         ? token
         : undefined
     }
+    const settleConfirmation = (
+      token: ConfirmationToken | undefined,
+      snapshot: SidechainTranscriptSnapshot | undefined,
+    ): void => {
+      if (!current() || token === undefined || confirmation.current !== token) return
+      if (snapshot !== undefined) {
+        const fingerprint = transcriptFingerprint(snapshot)
+        if (token.baseline === undefined) {
+          token.baseline = fingerprint
+        } else if (fingerprint !== token.baseline) {
+          confirmation.current = undefined
+          return
+        }
+      }
+      if (token.remaining <= 0) confirmation.current = undefined
+    }
     const read = async (): Promise<void> => {
       if (!current() || inFlight) return
       const token = activeConfirmation()
       if (token !== undefined) token.remaining--
       inFlight = true
+      let snapshot: SidechainTranscriptSnapshot | undefined
       try {
-        const snapshot = await history.fetchTranscript(address, abort.signal)
+        snapshot = await history.fetchTranscript(address, abort.signal)
         if (current()) {
           setTranscript({ owner: selectedKey, status: 'ready', snapshot })
-          if (token !== undefined && confirmation.current === token) {
-            const fingerprint = transcriptFingerprint(snapshot)
-            if (token.baseline === undefined) {
-              token.baseline = fingerprint
-            } else if (fingerprint !== token.baseline) {
-              confirmation.current = undefined
-            }
-            if (token.remaining <= 0) {
-              confirmation.current = undefined
-            }
-          }
         }
       } catch {
         if (current()) setTranscript(previous => previous.owner === selectedKey
@@ -379,6 +385,7 @@ export function SidechainView(props: SidechainViewProps) {
           : previous)
       } finally {
         inFlight = false
+        settleConfirmation(token, snapshot)
       }
     }
 
@@ -399,8 +406,7 @@ export function SidechainView(props: SidechainViewProps) {
         void read().finally(schedule)
       }, delay)
     }
-    void read()
-    schedule()
+    void read().finally(schedule)
     return () => {
       disposed = true
       transcriptEpoch.current++
