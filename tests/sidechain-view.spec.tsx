@@ -658,4 +658,101 @@ describe('SidechainView list shell', () => {
     expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('')
     unmount(mounted.root, mounted.container)
   })
+
+  it('confirms an admitted prompt against later history and stops at a bounded retry limit', async () => {
+    vi.useFakeTimers()
+    const oldSnapshot = transcriptSnapshot([{ kind: 'assistant', seq: 1, text: 'before' }])
+    const newSnapshot = transcriptSnapshot([
+      { kind: 'assistant', seq: 1, text: 'before' },
+      { kind: 'user', seq: 2, text: 'confirmed' },
+    ])
+    let historyRead = 0
+    const fetchTranscript = vi.fn(async () => {
+      historyRead++
+      return historyRead < 3 ? oldSnapshot : newSnapshot
+    })
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { fetchTranscript, sendPrompt },
+    })))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    setInputValue(input, 'confirmed')
+    act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(2)
+    await act(async () => { vi.advanceTimersByTime(250); await Promise.resolve(); await Promise.resolve() })
+    expect(fetchTranscript).toHaveBeenCalledTimes(3)
+    expect(mounted.container.textContent).toContain('confirmed')
+
+    const readsAfterConfirmation = fetchTranscript.mock.calls.length
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve() })
+    expect(fetchTranscript.mock.calls.length).toBe(readsAfterConfirmation)
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('keeps drafts per child and does not let a stale admission clear or refresh the new child', async () => {
+    let resolveOld!: (value: boolean) => void
+    const sendPrompt = vi.fn((address: SidebarSubagentAddress) => address.childSessionId === 'old'
+      ? new Promise<boolean>(resolve => { resolveOld = resolve })
+      : Promise.resolve(true))
+    const fetchTranscript = vi.fn(async (address: SidebarSubagentAddress) => transcriptSnapshot([
+      { kind: 'assistant', seq: address.childSessionId === 'old' ? 1 : 10, text: `${address.childSessionId} history` },
+    ]))
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('old'), child('new')] }) } })
+    const initial = props(sessionFeed, { meta: { version: 1, selectedChildId: 'old' }, history: { sendPrompt, fetchTranscript } })
+    const mounted = mount(createElement(SidechainView, initial))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    const oldInput = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    setInputValue(oldInput, 'old draft')
+    act(() => { mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!.requestSubmit() })
+    mounted.rerender(createElement(SidechainView, {
+      ...initial, tab: { ...initial.tab, meta: { version: 1, selectedChildId: 'new' } },
+    }))
+    const newInput = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    expect(newInput.value).toBe('')
+    setInputValue(newInput, 'new draft')
+    mounted.rerender(createElement(SidechainView, initial))
+    expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('old draft')
+    const newReadsBeforeLate = fetchTranscript.mock.calls.filter(call => call[0].childSessionId === 'new').length
+    await act(async () => { resolveOld(true); await Promise.resolve(); await Promise.resolve() })
+    expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('old draft')
+    expect(fetchTranscript.mock.calls.filter(call => call[0].childSessionId === 'new')).toHaveLength(newReadsBeforeLate)
+    mounted.rerender(createElement(SidechainView, {
+      ...initial, tab: { ...initial.tab, meta: { version: 1, selectedChildId: 'new' } },
+    }))
+    expect(mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')?.value).toBe('new draft')
+    unmount(mounted.root, mounted.container)
+  })
+
+  it('uses the exact continuable address and trimmed text, disables empty submit, and ignores IME Enter', async () => {
+    const sendPrompt = vi.fn(async () => true)
+    const sessionFeed = feed({ current: 'parent', byId: {}, subagentsByParent: { parent: catalog({ entries: [child('side')] }) } })
+    const mounted = mount(createElement(SidechainView, props(sessionFeed, {
+      meta: { version: 1, selectedChildId: 'side' }, history: { sendPrompt },
+    })))
+    const input = mounted.container.querySelector<HTMLInputElement>('[data-sidechain-composer-input]')!
+    const form = mounted.container.querySelector<HTMLFormElement>('[data-sidechain-composer]')!
+    const submit = mounted.container.querySelector<HTMLButtonElement>('[data-sidechain-composer-submit]')!
+    expect(submit.disabled).toBe(true)
+    act(() => {
+      input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, isComposing: true }))
+      form.requestSubmit()
+    })
+    expect(sendPrompt).not.toHaveBeenCalled()
+    act(() => {
+      input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+      setInputValue(input, '  exact prompt  ')
+      form.requestSubmit()
+    })
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(sendPrompt).toHaveBeenCalledWith(
+      { parentSessionId: 'parent', childSessionId: 'side', mode: 'continuable' },
+      'exact prompt',
+      expect.any(AbortSignal),
+    )
+    unmount(mounted.root, mounted.container)
+  })
 })

@@ -1,8 +1,8 @@
 /**
  * First increment of the native Sidechain view.
  *
- * This module owns the direct-child catalog and selection shell only. History
- * rows and the continuation composer are intentionally added in later tasks.
+ * This module owns the direct-child catalog, selected transcript, and
+ * continuation composer for the native Sidechain tab.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { IconRefreshOutline14, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -30,6 +30,8 @@ import { getSidechainLabels, t } from '../locales.ts'
 import css from './SidechainView.module.css'
 
 const ACTIVITY_POLL_MS = 3000
+const CONFIRMATION_POLL_MS = 250
+const CONFIRMATION_MAX_ATTEMPTS = 8
 const EMPTY_ENTRIES: readonly CatalogEntry[] = []
 
 export interface SidechainViewProps {
@@ -55,6 +57,17 @@ interface TranscriptState {
   owner: string | undefined
   status: 'loading' | 'ready' | 'error'
   snapshot: SidechainTranscriptSnapshot | undefined
+}
+
+interface ConfirmationState {
+  owner: string
+  baseline: string
+  token: number
+}
+
+function transcriptFingerprint(snapshot: SidechainTranscriptSnapshot | undefined): string {
+  if (snapshot === undefined) return ''
+  return JSON.stringify({ rows: snapshot.rows, produced: snapshot.produced, streaming: snapshot.streaming, hasMore: snapshot.hasMore })
 }
 
 function selectActivityLine(
@@ -203,8 +216,13 @@ export function SidechainView(props: SidechainViewProps) {
 
   const selectedKey = selected === undefined ? undefined : `${parentSessionId}:${selected.id}`
   const [transcript, setTranscript] = useState<TranscriptState>({ owner: undefined, status: 'loading', snapshot: undefined })
+  const transcriptRef = useRef(transcript)
+  transcriptRef.current = transcript
   const transcriptEpoch = useRef(0)
   const [transcriptRetryNonce, setTranscriptRetryNonce] = useState(0)
+  const [confirmation, setConfirmation] = useState<ConfirmationState | undefined>(undefined)
+  const confirmationToken = useRef(0)
+  const completedConfirmation = useRef<number | undefined>(undefined)
 
   const [draft, setDraft] = useState('')
   const [promptError, setPromptError] = useState(false)
@@ -212,14 +230,18 @@ export function SidechainView(props: SidechainViewProps) {
   const submitEpoch = useRef(0)
   const submitAbort = useRef<AbortController | undefined>(undefined)
   const submitInFlight = useRef(false)
+  const drafts = useRef(new Map<string, string>())
+  const composing = useRef(false)
 
   // Drafts and submissions belong to one selected child lifecycle. A child
   // switch aborts the old request and clears its draft, so no prompt can leak
   // into a different conversation.
   useEffect(() => {
-    setDraft('')
+    setDraft(selectedKey === undefined ? '' : drafts.current.get(selectedKey) ?? '')
     setPromptError(false)
     setSending(false)
+    completedConfirmation.current = undefined
+    setConfirmation(undefined)
     submitInFlight.current = false
     submitAbort.current?.abort()
     submitAbort.current = undefined
@@ -239,15 +261,23 @@ export function SidechainView(props: SidechainViewProps) {
     submitAbort.current?.abort()
     submitAbort.current = undefined
     submitInFlight.current = false
+    completedConfirmation.current = undefined
+    setConfirmation(undefined)
     setSending(false)
   }, [visible])
 
   const submitPrompt = useCallback(() => {
-    if (!visible || selected === undefined || selected.mode !== 'continuable') return
+    if (!visible || selected === undefined || selectedKey === undefined || selected.mode !== 'continuable') return
     const text = draft.trim()
     if (text === '' || submitInFlight.current) return
 
     const epoch = submitEpoch.current
+    const owner = selectedKey
+    const previousTranscript = transcriptRef.current.owner === owner
+      ? transcriptRef.current.snapshot
+      : undefined
+    completedConfirmation.current = undefined
+    setConfirmation(undefined)
     const abort = new AbortController()
     const address: SidechainContinuableAddress = {
       parentSessionId,
@@ -273,9 +303,14 @@ export function SidechainView(props: SidechainViewProps) {
       }
       // The durable child history is the source of truth. Clear only after
       // admission and force a fresh read; never append an optimistic row.
+      drafts.current.delete(owner)
       setDraft('')
       setPromptError(false)
-      setTranscriptRetryNonce(value => value + 1)
+      setConfirmation({
+        owner,
+        baseline: transcriptFingerprint(previousTranscript),
+        token: ++confirmationToken.current,
+      })
     }).catch(() => {
       if (submitEpoch.current === epoch && !abort.signal.aborted && visible) setPromptError(true)
     }).finally(() => {
@@ -284,7 +319,7 @@ export function SidechainView(props: SidechainViewProps) {
       if (submitAbort.current === abort) submitAbort.current = undefined
       setSending(false)
     })
-  }, [draft, history, parentSessionId, selected, visible])
+  }, [draft, history, parentSessionId, selected, selectedKey, visible])
 
   // A transcript belongs to exactly one selected-child lifecycle. The same
   // epoch guards both timer reads and late promises after selection/hide.
@@ -300,13 +335,34 @@ export function SidechainView(props: SidechainViewProps) {
     const abort = new AbortController()
     let disposed = false
     let inFlight = false
+    const activeConfirmation = confirmation?.owner === selectedKey
+      && confirmation.token !== completedConfirmation.current
+      ? confirmation
+      : undefined
+    let confirmationAttempts = 0
+    let confirmationTimer: ReturnType<typeof globalThis.setInterval> | undefined
+    let confirmationActive = activeConfirmation !== undefined
+    const stopConfirmation = (): void => {
+      confirmationActive = false
+      if (confirmationTimer !== undefined) {
+        globalThis.clearInterval(confirmationTimer)
+        confirmationTimer = undefined
+      }
+      if (activeConfirmation !== undefined) completedConfirmation.current = activeConfirmation.token
+    }
     const current = (): boolean => !disposed && transcriptEpoch.current === epoch
     const read = async (): Promise<void> => {
       if (!current() || inFlight) return
       inFlight = true
       try {
         const snapshot = await history.fetchTranscript(address, abort.signal)
-        if (current()) setTranscript({ owner: selectedKey, status: 'ready', snapshot })
+        if (current()) {
+          setTranscript({ owner: selectedKey, status: 'ready', snapshot })
+          if (confirmationActive && activeConfirmation !== undefined
+            && transcriptFingerprint(snapshot) !== activeConfirmation.baseline) {
+            stopConfirmation()
+          }
+        }
       } catch {
         if (current()) setTranscript(previous => previous.owner === selectedKey
           ? { owner: selectedKey, status: 'error', snapshot: previous.snapshot }
@@ -325,13 +381,23 @@ export function SidechainView(props: SidechainViewProps) {
     const timer = selected.activity === 'running'
       ? globalThis.setInterval(() => { void read() }, ACTIVITY_POLL_MS)
       : undefined
+    if (confirmationActive) {
+      confirmationTimer = globalThis.setInterval(() => {
+        if (++confirmationAttempts > CONFIRMATION_MAX_ATTEMPTS) {
+          stopConfirmation()
+          return
+        }
+        void read()
+      }, CONFIRMATION_POLL_MS)
+    }
     return () => {
       disposed = true
       transcriptEpoch.current++
       abort.abort()
       if (timer !== undefined) globalThis.clearInterval(timer)
+      if (confirmationTimer !== undefined) globalThis.clearInterval(confirmationTimer)
     }
-  }, [history, parentSessionId, selected?.activity, selected?.id, selected?.mode, selectedKey, transcriptRetryNonce, visible])
+  }, [confirmation, history, parentSessionId, selected?.activity, selected?.id, selected?.mode, selectedKey, transcriptRetryNonce, visible])
 
   if (selectedChildId !== undefined && selected !== undefined) {
     const selectedTranscript = transcript.owner === selectedKey ? transcript : {
@@ -377,13 +443,18 @@ export function SidechainView(props: SidechainViewProps) {
         <div className={css.sidechainFooter} data-sidechain-footer>
           {selected.mode === 'one-shot' ? (
             <div className={css.sidechainReadOnly} data-sidechain-read-only role="status">
-              {labels.sidechainReadOnly}
+              {labels.sidechainOneShot} · {labels.sidechainReadOnly}
             </div>
           ) : (
             <form
               className={css.sidechainComposer}
               data-sidechain-composer
-              onSubmit={event => { event.preventDefault(); submitPrompt() }}
+              onSubmit={event => {
+                event.preventDefault()
+                const nativeEvent = event.nativeEvent as unknown as { isComposing?: boolean }
+                if (composing.current || nativeEvent.isComposing === true) return
+                submitPrompt()
+              }}
               aria-busy={sending}
             >
               <input
@@ -394,8 +465,14 @@ export function SidechainView(props: SidechainViewProps) {
                 placeholder={labels.sidechainPromptPlaceholder}
                 aria-label={labels.sidechainPromptPlaceholder}
                 disabled={sending}
+                onCompositionStart={() => { composing.current = true }}
+                onCompositionEnd={() => { composing.current = false }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && (composing.current || event.nativeEvent.isComposing)) event.preventDefault()
+                }}
                 onChange={event => {
                   setDraft(event.currentTarget.value)
+                  if (selectedKey !== undefined) drafts.current.set(selectedKey, event.currentTarget.value)
                   if (promptError) setPromptError(false)
                 }}
               />
@@ -404,7 +481,7 @@ export function SidechainView(props: SidechainViewProps) {
                 data-sidechain-composer-submit
                 type="submit"
                 aria-label={sending ? labels.sidechainSending : labels.sidechainSend}
-                disabled={sending}
+                disabled={sending || draft.trim() === ''}
               >
                 {sending ? labels.sidechainSending : labels.sidechainSend}
               </button>
