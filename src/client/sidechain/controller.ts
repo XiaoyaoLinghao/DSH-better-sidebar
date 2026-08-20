@@ -1,6 +1,7 @@
 import {
   allLeaves,
   firstLeaf,
+  leafWithTab,
   patchTab,
   type SidebarState,
   type SidebarStore,
@@ -110,8 +111,19 @@ export function createSidechainController(
     // into an inactive session still persists there, but must not move the
     // currently visible session's panel.
     if (store.getSnapshot().sessionId === sessionId) {
-      store.reduce(state => state.panelOpen ? state : { ...state, panelOpen: true })
-      store.reduce(state => ({ ...state, activePane: firstLeaf(state.splits).id }))
+      store.reduce((state) => {
+        const tab = sidechainTab(state)
+        const bottomPane = tab === undefined ? undefined : leafWithTab(state.bottomSplits, tab.id)
+        if (bottomPane !== undefined) {
+          return { ...state, bottomOpen: true, activePane: bottomPane.id }
+        }
+        const rightPane = tab === undefined ? undefined : leafWithTab(state.splits, tab.id)
+        return {
+          ...state,
+          panelOpen: true,
+          activePane: rightPane?.id ?? firstLeaf(state.splits).id,
+        }
+      })
     }
     service.openTab(
       { type: SIDECHAIN_TAB_ID, meta: metadataFor(childId) },
@@ -123,8 +135,9 @@ export function createSidechainController(
   }
 
   const claimSideChild = (sessionId: string, childId: string): boolean => {
-    if (!enabled()) return false
     let sessionClaims = claims.get(sessionId)
+    if (sessionClaims?.has(childId)) return true
+    if (!enabled()) return false
     if (sessionClaims === undefined) {
       sessionClaims = new Set<string>()
       claims.set(sessionId, sessionClaims)
