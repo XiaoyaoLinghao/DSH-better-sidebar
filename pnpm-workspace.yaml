@@ -9,6 +9,7 @@ allowBuilds:
   protobufjs: true
 
 minimumReleaseAgeExclude:
+  - dsh-better-sidebar
   - '@deepseek-ai/*'
   - '@deepseek-ai/cordis-plugin-include@1.0.5-rc.1'
   - '@deepseek-ai/cordis-plugin-loader@1.0.1-rc.1'

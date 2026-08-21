@@ -12,6 +12,7 @@
 #
 # 用法：
 #   bash scripts/install.sh [版本] [--restart] [--dry-run]
+#   bash scripts/install.sh --source [--profile <名>] [--dry-run]
 #   bash scripts/install.sh --repair [--profile <名>] [--dry-run]
 #
 #   版本        npm 版本号/范围，缺省为 latest（自动解析为 ^<最新>）。
@@ -51,6 +52,7 @@ dsh-better-sidebar 一键安装 / 依赖修复脚本
 
 用法：
   bash scripts/install.sh [版本] [--restart] [--dry-run] [--profile <名>]
+  bash scripts/install.sh --source [--profile <名>] [--dry-run]
   bash scripts/install.sh --repair [--profile <名>] [--dry-run]
 
   版本         npm 版本号/范围，缺省 latest（自动解析为最新）。示例：0.10.2、^0.10.2、latest
@@ -73,6 +75,7 @@ DSH_CMD="${DSH_CMD:-dsh}"
 RESTART=false
 DRY_RUN=false
 REPAIR=false
+SOURCE=false
 VERSION_SPEC=""
 PROFILE_NAME="web"
 while [ $# -gt 0 ]; do
@@ -80,6 +83,7 @@ while [ $# -gt 0 ]; do
     --restart) RESTART=true ;;
     --dry-run) DRY_RUN=true ;;
     --repair) REPAIR=true ;;
+    --source) SOURCE=true ;;
     --profile)
       if [ $# -lt 2 ]; then echo "--profile 需要一个 profile 名（如 web）" >&2; exit 2; fi
       PROFILE_NAME="$2"; shift ;;
@@ -117,8 +121,29 @@ if (!/^\s*allowBuilds:\s*$/m.test(t)) {
     }
   }
 }
-// minimumReleaseAgeExclude：放行本插件（版本无关），避免 <24h 新版本被拒
-if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
+// minimumReleaseAgeExclude：放行 DSH 依赖与本插件，避免 <24h 新版本被拒
+const hasDeepseekApproval = t.split(/\r?\n/).some((line) => {
+  const value = line.trim();
+  const quote = String.fromCharCode(39);
+  return value === "- @deepseek-ai/*"
+    || value === "- " + quote + "@deepseek-ai/*" + quote
+    || value === "- \"@deepseek-ai/*\"";
+});
+if (!hasDeepseekApproval) {
+  if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
+    t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - " + String.fromCharCode(39) + "@deepseek-ai/*" + String.fromCharCode(39));
+  } else {
+    t += "\nminimumReleaseAgeExclude:\n  - " + String.fromCharCode(39) + "@deepseek-ai/*" + String.fromCharCode(39) + "\n";
+  }
+}
+const hasPackageApproval = t.split(/\r?\n/).some((line) => {
+  const value = line.trim();
+  const quote = String.fromCharCode(39);
+  return value === "- dsh-better-sidebar"
+    || value === "- " + quote + "dsh-better-sidebar" + quote
+    || value === "- \"dsh-better-sidebar\"";
+});
+if (!hasPackageApproval) {
   if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
     t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - dsh-better-sidebar");
   } else {
@@ -192,25 +217,73 @@ if [ "$REPAIR" = true ]; then
   exit 0
 fi
 
-SPEC="$(resolve_spec "$VERSION_SPEC")"
-CLI="$(dsh_cli)"
-say "目标：$CLI plugin --profile $PROFILE_NAME add $PKG@${SPEC}（profile: ${PROFILE_DIR}）"
+INSTALL_SPEC=""
+if [ "$SOURCE" = true ]; then
+  [ -z "$VERSION_SPEC" ] || die "--source 不能与 npm 版本参数同时使用。"
+  SCRIPT_PATH="${BASH_SOURCE:-$0}"
+  ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd -P)"
+  ARTIFACT_DIR="$ROOT/.artifacts"
+  SOURCE_VERSION="$(node -e '
+const fs = require("fs");
+const path = require("path");
+const root = process.argv[1];
+const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "dsh.plugin.json"), "utf8"));
+if (pkg.name !== "dsh-better-sidebar") throw new Error(`unexpected package name: ${pkg.name}`);
+if (pkg.version !== manifest.version) throw new Error(`manifest version mismatch: ${pkg.version} != ${manifest.version}`);
+process.stdout.write(pkg.version);
+' "$ROOT")" || die "源码 manifest 校验失败。"
+  TARBALL="$ARTIFACT_DIR/dsh-better-sidebar-${SOURCE_VERSION}.tgz"
+  cd "$ROOT" || die "无法切换到源码目录：$ROOT"
+  CLI="$(dsh_cli)"
+  say "目标：$CLI plugin --profile $PROFILE_NAME add file:$TARBALL（源码构建，profile: ${PROFILE_DIR}）"
 
-if [ "$DRY_RUN" = true ]; then
-  say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（${PKG}）"
-  say "[dry-run] 步骤 2：执行 $CLI plugin --profile $PROFILE_NAME add $PKG@${SPEC}（安装 + bundle 自动注册）"
-  say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
-  say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
-  if [ "$RESTART" = true ]; then say "[dry-run] 步骤 5：pm2 restart dsh-web"; else say "[dry-run] 步骤 5：提示用户手动重启 DSH"; fi
-  exit 0
+  if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] 源码根目录：$ROOT"
+    say "[dry-run] 源码版本：$SOURCE_VERSION"
+    say "[dry-run] 产物路径：$TARBALL"
+    say "[dry-run] 步骤 1：验证 DSH 版本（要求 0.1.0-rc.8）"
+    say "[dry-run] 步骤 2：cd $ROOT && pnpm install --frozen-lockfile"
+    say "[dry-run] 步骤 3：cd $ROOT && pnpm build"
+    say "[dry-run] 步骤 4：cd $ROOT && pnpm pack --pack-destination $ARTIFACT_DIR"
+    say "[dry-run] 步骤 5：$CLI plugin --profile $PROFILE_NAME add file:$TARBALL"
+    exit 0
+  fi
+
+  OBSERVED_DSH_VERSION="$($CLI --version 2>&1 | tail -n 1)"
+  [ "$OBSERVED_DSH_VERSION" = "0.1.0-rc.8" ] \
+    || die "源码版要求 DSH 0.1.0-rc.8，当前为 ${OBSERVED_DSH_VERSION}。"
+
+  # 源码构建必须先获得 DSH 版本确认，再写入 profile 配置。
+  ensure_workspace_settings
+  (cd "$ROOT" && pnpm install --frozen-lockfile)
+  (cd "$ROOT" && pnpm build)
+  mkdir -p "$ARTIFACT_DIR"
+  (cd "$ROOT" && pnpm pack --pack-destination "$ARTIFACT_DIR")
+  [ -f "$TARBALL" ] || die "pnpm pack 未生成预期 tarball：$TARBALL"
+  INSTALL_SPEC="file:$TARBALL"
+else
+  SPEC="$(resolve_spec "$VERSION_SPEC")"
+  CLI="$(dsh_cli)"
+  INSTALL_SPEC="$PKG@$SPEC"
+  say "目标：$CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC（profile: ${PROFILE_DIR}）"
+
+  if [ "$DRY_RUN" = true ]; then
+    say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（${PKG}）"
+    say "[dry-run] 步骤 2：执行 $CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC（安装 + bundle 自动注册）"
+    say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
+    say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
+    if [ "$RESTART" = true ]; then say "[dry-run] 步骤 5：pm2 restart dsh-web"; else say "[dry-run] 步骤 5：提示用户手动重启 DSH"; fi
+    exit 0
+  fi
+
+  # 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、不放行旧版本策略
+  ensure_workspace_settings
 fi
 
-# 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、不放行旧版本策略
-ensure_workspace_settings
-
-# 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）
-say "执行 $CLI plugin --profile $PROFILE_NAME add $PKG@$SPEC ..."
-if ! $CLI plugin --profile "$PROFILE_NAME" add "$PKG@$SPEC" 2>&1 | tail -n +1; then
+# 官方 CLI 安装 + bundle 自动注册（含挂载）
+say "执行 $CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC ..."
+if ! $CLI plugin --profile "$PROFILE_NAME" add "$INSTALL_SPEC" 2>&1 | tail -n +1; then
   warn "dsh plugin add 失败。已预写 allowBuilds 与 minimumReleaseAgeExclude，仍失败的可能原因："
   warn "  - 网络/登录问题：npm registry 不可达或需要登录。"
   warn "  - 依赖安装冲突：可手动重试 cd $PROFILE_DIR && pnpm install。"
@@ -229,6 +302,17 @@ if ! node -e '
   exit 1
 fi
 say "bundle 已注册：dsh.profile.bundles 包含 ${PKG}（下次启动自动挂载）"
+
+if [ "$SOURCE" = true ]; then
+  if ! node -e '
+    const fs = require("fs");
+    const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    process.exit(p.name === process.argv[2] && p.version === process.argv[3] ? 0 : 1);
+  ' "$PROFILE_DIR/node_modules/$PKG/package.json" "$PKG" "$SOURCE_VERSION"; then
+    die "源码安装版本校验失败：profile 中的 ${PKG} 不是 ${SOURCE_VERSION}。"
+  fi
+  say "源码版本已校验：${PKG}@${SOURCE_VERSION}"
+fi
 
 # 步骤 3：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
 MOUNT_RESULT="$(node -e '
@@ -269,7 +353,7 @@ if (!removed) {
   && say "已从 $PATCH_YML 移除旧的 better-sidebar 手动挂载行（bundle 通道接管挂载）" \
   || say "无旧手动挂载行，跳过"
 
-say "安装完成：$PKG@$SPEC"
+say "安装完成：$INSTALL_SPEC"
 
 # 步骤 4：重启提示
 if [ "$RESTART" = true ]; then
