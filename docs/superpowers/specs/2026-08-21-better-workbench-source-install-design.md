@@ -166,8 +166,10 @@ Automated tests must prove:
 
 - package and plugin manifest versions are exactly `0.15.0-xlh.1` and equal;
 - the compatibility package name and plugin id are unchanged;
-- display name, fork URL, source commands, channel warning, and rc.8 baseline
-  are present in both READMEs;
+- package manifests and the rendered settings badge expose the approved display
+  name, fork URL, version, compatibility ids, and rc.8 baseline;
+- the Bash and PowerShell command blocks marked for automation in both READMEs
+  are extracted and successfully executed against isolated fake DSH profiles;
 - Bash and PowerShell source dry-runs make no writes or child install/build
   calls;
 - source mode uses the repository root even when invoked elsewhere;
@@ -176,6 +178,11 @@ Automated tests must prove:
 - dependency/build/pack/plugin-add failures stop at the correct boundary;
 - successful fake installs verify version and bundle registration;
 - repeated source installs remain deterministic.
+
+Human-facing channel warnings, attribution wording, and historical narrative
+are reviewed as documentation rather than guarded by brittle exact-text tests.
+The reviewer must still confirm Chinese/English semantic equivalence and that
+the current fork path cannot be mistaken for the upstream npm channel.
 
 Release gates are:
 

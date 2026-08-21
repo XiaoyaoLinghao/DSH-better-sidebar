@@ -37,7 +37,7 @@
 - `tests/source-install-bash.spec.ts`: Bash source/dry-run/failure/idempotency behavior.
 - `tests/source-install-powershell.spec.ts`: PowerShell parity and Windows path behavior.
 - `tests/manifest-consistency.spec.ts`, `tests/service.spec.ts`, `tests/side-card-section.spec.tsx`: identity and version guards.
-- `tests/branding-docs.spec.ts`: bilingual README and fork-channel contract.
+- `tests/readme-source-install.spec.ts`: extracts marked README commands and executes them against isolated fake DSH profiles.
 - `tests/sidechain-provenance.spec.ts`: packed artifact inventory and attribution guard.
 - `README.md`, `README_EN.md`: product identity, source-first install contract, current release, history and attribution.
 
@@ -464,7 +464,7 @@ git commit -m "feat: install Better Workbench from source on PowerShell"
 ### Task 4: Make the bilingual README source-first and automation-readable
 
 **Files:**
-- Create: `tests/branding-docs.spec.ts`
+- Create: `tests/readme-source-install.spec.ts`
 - Modify: `README.md:1-220`
 - Modify: `README_EN.md:1-235`
 
@@ -472,40 +472,54 @@ git commit -m "feat: install Better Workbench from source on PowerShell"
 - Consumes: Task 2 and Task 3 command syntax and the Task 1 identity/version.
 - Produces: equivalent Chinese/English identity, recommended source command, automation contract, channel warning, update/uninstall/rollback, and `v0.15.0-xlh.1` release notes.
 
-- [ ] **Step 1: Write failing bilingual documentation-contract tests**
+- [ ] **Step 1: Write failing executable README-command tests**
 
-Create `tests/branding-docs.spec.ts` and load both READMEs. Assert for each:
+Create `tests/readme-source-install.spec.ts`. Locate the fenced command that
+immediately follows each machine-readable marker:
 
-```ts
-expect(readme).toMatch(/^# DSH Better Workbench/m)
-expect(readme).toContain('0.15.0-xlh.1')
-expect(readme).toContain('https://github.com/XiaoyaoLinghao/DSH-better-sidebar')
-expect(readme).toContain('dsh-external/dsh-better-sidebar')
-expect(readme).toContain('dsh-better-sidebar')
-expect(readme).toContain('0.1.0-rc.8')
-expect(readme).toContain('bash scripts/install.sh --source --profile web')
-expect(readme).toContain('powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web')
-expect(readme).toContain('dsh plugin --profile web remove dsh-better-sidebar')
-expect(readme).toContain('THIRD_PARTY_NOTICES')
+````markdown
+<!-- source-install:bash -->
+```bash
+bash scripts/install.sh --source --profile web
 ```
 
-Extract the primary installation section (between Installation and Keyboard
-Shortcuts headings) and assert it explicitly labels
-`dsh-better-sidebar@latest` as the upstream npm channel, not this fork. Also
-assert the documents retain at least one historical
-`https://github.com/omdsh-dev/DSH-better-sidebar/pull/` link so attribution was
-not mass-rewritten.
+<!-- source-install:powershell -->
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web
+```
+````
+
+Export a local test helper with the exact signature:
+
+```ts
+function commandAfterMarker(readme: string, marker: 'bash' | 'powershell'): string
+```
+
+It must reject a missing marker, more than one marker, an absent adjacent code
+fence, or a multiline command. For each README and each platform command:
+
+1. create a fresh Task 2 `SourceInstallFixture`;
+2. execute the extracted command with `cwd: fixture.repo`, `env: fixture.env`,
+   and no shell interpolation beyond the command that the README itself tells
+   an automation agent to run;
+3. assert exit 0, the installed manifest version is `0.15.0-xlh.1`, the profile
+   bundle contains `dsh-better-sidebar`, and the fake CLI call includes one
+   absolute `file:` tarball argument;
+4. clean only the fixture sandbox.
+
+This test earns its assertions by executing the documented consumer path. It
+must not assert headings, prose wording, repository URLs, or raw installer
+source strings.
 
 - [ ] **Step 2: Run the contract test and confirm the old source flow fails**
 
 Run:
 
 ```bash
-pnpm exec vitest run tests/branding-docs.spec.ts
+pnpm exec vitest run tests/readme-source-install.spec.ts
 ```
 
-Expected: FAIL on the old heading, fork URL, source commands, uninstall
-contract, and npm-channel warning.
+Expected: FAIL because the marked executable command blocks do not exist.
 
 - [ ] **Step 3: Rewrite the Chinese current identity and install sections**
 
@@ -519,7 +533,9 @@ In `README.md`:
   fork identity, native Sidechain, source installer, rc.8 floor, and retained
   upstream/BSD attribution;
 - replace the primary install block with prerequisites, clone command, and the
-  two one-command platform alternatives;
+  two one-command platform alternatives, with the exact
+  `<!-- source-install:bash -->` and `<!-- source-install:powershell -->`
+  markers immediately before their single-line fenced commands;
 - add an `供 DSH / 自动化代理读取` block that states: run from the cloned repo,
   select one platform command, success requires installed version plus bundle,
   no implicit restart, and failure must stop rather than fall back to npm;
@@ -543,18 +559,20 @@ must be titled `For DSH / automation agents`.
 Run:
 
 ```bash
-pnpm exec vitest run tests/branding-docs.spec.ts tests/sidechain-provenance.spec.ts
+pnpm exec vitest run tests/readme-source-install.spec.ts tests/sidechain-provenance.spec.ts
 rg -n "XiaoyaoLinghao|0.15.0-xlh.1|--source|upstream npm|上游 npm" README.md README_EN.md
 git diff --check
 ```
 
-Expected: tests pass; current identity/install links target the fork; historical
-upstream PR links and `THIRD_PARTY_NOTICES` remain.
+Expected: the extracted commands execute successfully. The `rg` output is a
+review aid, not a test gate: the Task 4 Sol reviewer inspects current fork
+links, channel warnings, Chinese/English semantic parity, historical upstream
+links, and `THIRD_PARTY_NOTICES` attribution.
 
 - [ ] **Step 6: Commit Task 4**
 
 ```bash
-git add README.md README_EN.md tests/branding-docs.spec.ts
+git add README.md README_EN.md tests/readme-source-install.spec.ts
 git commit -m "docs: make source install the primary fork channel"
 ```
 
@@ -564,7 +582,7 @@ git commit -m "docs: make source install the primary fork channel"
 
 **Files:**
 - Modify: `tests/sidechain-provenance.spec.ts`
-- Modify: `tests/script-safety.spec.ts` only to replace a now-stale two-package installer assertion with the exact four-package contract
+- Modify: `tests/script-safety.spec.ts` only if an existing assertion contradicts the new behavior already proven by installer execution tests
 - Modify: `docs/superpowers/plans/2026-08-21-better-workbench-source-install.md` only to check completed boxes during execution
 
 **Interfaces:**
@@ -584,17 +602,11 @@ expect(files).toContain('THIRD_PARTY_NOTICES')
 expect(files.some(path => path.startsWith('.artifacts/'))).toBe(false)
 ```
 
-In the script safety source check, require the four literal approvals in both
-installers and forbid recursive removal of `.artifacts`:
-
-```ts
-for (const source of [bashInstaller, powershellInstaller]) {
-  for (const dependency of ['node-pty', 'protobufjs', '@deepseek-ai/dsh-subprocess-local', 'koffi']) {
-    expect(source).toContain(dependency)
-  }
-  expect(source).not.toMatch(/(?:rm\s+-rf|Remove-Item[^\n]*-Recurse)[^\n]*\.artifacts/)
-}
-```
+Do not add source-text assertions for installers. Task 2 and Task 3 must prove
+the four approvals, dry-run zero writes, exact argv, failure boundaries, and
+idempotency through executed behavior. If an existing `script-safety` test is
+stale, replace it with an executed fixture assertion or remove only the
+duplicated textual assertion after confirming equivalent behavioral coverage.
 
 - [ ] **Step 2: Run the release guards**
 
@@ -614,7 +626,7 @@ Run:
 
 ```bash
 pnpm build
-pnpm exec vitest run tests/manifest-consistency.spec.ts tests/service.spec.ts tests/side-card-section.spec.tsx tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/branding-docs.spec.ts tests/sidechain-provenance.spec.ts tests/script-safety.spec.ts
+pnpm exec vitest run tests/manifest-consistency.spec.ts tests/service.spec.ts tests/side-card-section.spec.tsx tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts tests/sidechain-provenance.spec.ts tests/script-safety.spec.ts
 pnpm typecheck
 pnpm check:consumer-types
 pnpm pack --dry-run --json
