@@ -589,7 +589,7 @@ git commit -m "docs: make source install the primary fork channel"
 - Consumes: Tasks 1-4 complete tree.
 - Produces: release-level proof that source installers and documentation ship, `.artifacts` does not, and the real rc.8 mount remains green.
 
-- [ ] **Step 1: Add the failing pack-inventory assertions**
+- [x] **Step 1: Add the failing pack-inventory assertions**
 
 Extend the existing `pnpm pack --dry-run --json` inventory test to require:
 
@@ -608,7 +608,7 @@ idempotency through executed behavior. If an existing `script-safety` test is
 stale, replace it with an executed fixture assertion or remove only the
 duplicated textual assertion after confirming equivalent behavioral coverage.
 
-- [ ] **Step 2: Run the release guards**
+- [x] **Step 2: Run the release guards**
 
 Run:
 

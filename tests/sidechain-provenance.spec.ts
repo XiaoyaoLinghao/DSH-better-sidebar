@@ -96,6 +96,12 @@ describe('sidechain package provenance', () => {
     const notice = read('THIRD_PARTY_NOTICES')
     expect(normalizeNotice(notice)).toBe(normalizeNotice(completeBsdNotice))
 
-    expect(packInventory()).toContain('THIRD_PARTY_NOTICES')
+    const files = packInventory()
+    expect(files).toContain('README.md')
+    expect(files).toContain('README_EN.md')
+    expect(files).toContain('scripts/install.sh')
+    expect(files).toContain('scripts/install.ps1')
+    expect(files).toContain('THIRD_PARTY_NOTICES')
+    expect(files.some(path => path.startsWith('.artifacts/'))).toBe(false)
   }, 120_000)
 })
