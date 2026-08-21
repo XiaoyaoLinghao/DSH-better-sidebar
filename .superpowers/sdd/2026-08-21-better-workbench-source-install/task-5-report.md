@@ -25,16 +25,17 @@ approved inventory assertions, the release guard passed.
 - `pnpm pack --dry-run --json`: **passed**; inventory contains both READMEs, both installers, and `THIRD_PARTY_NOTICES`, and contains no `.artifacts/` path.
 - `git diff --check`: **passed**.
 
-`pnpm typecheck` is currently **blocked by Task 4's existing README test
-typing**, not by the Task 5 change:
+`pnpm typecheck` initially reported three existing type errors in the Task 4
+README behavior test. A focused follow-up repaired those errors without
+changing the behavioral design: regex captures, the command executable,
+spawn output, and the tarball call/path are explicitly narrowed. The
+follow-up verification passed:
 
 ```text
-tests/readme-source-install.spec.ts(28,19): error TS2532: Object is possibly 'undefined'.
-tests/readme-source-install.spec.ts(65,25): error TS2365: Operator '+' cannot be applied to types 'string | Buffer' and 'string | Buffer'.
-tests/readme-source-install.spec.ts(86,10): error TS2532: Object is possibly 'undefined'.
+pnpm exec vitest run tests/readme-source-install.spec.ts tests/sidechain-provenance.spec.ts: 2 files, 7 passed
+pnpm typecheck: passed
+git diff --check: passed
 ```
-
-The Task 5 worker did not broaden scope into Task 4 files.
 
 ## Full unit suite and base comparison
 

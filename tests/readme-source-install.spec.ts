@@ -25,7 +25,11 @@ export function commandAfterMarker(readme: string, marker: 'bash' | 'powershell'
     throw new Error(`expected an adjacent ${marker} fenced command`)
   }
 
-  const command = match[1].trim()
+  const commandCapture = match[1]
+  if (commandCapture === undefined) {
+    throw new Error(`expected a captured ${marker} source command`)
+  }
+  const command = commandCapture.trim()
   if (!command || /[\r\n]/u.test(command)) {
     throw new Error(`${marker} source command must be a non-empty single line`)
   }
@@ -52,7 +56,11 @@ function executableFor(command: string): string {
 
 function runDocumentedCommand(fixture: SourceInstallFixture, command: string) {
   const argv = command.trim().split(/\s+/u)
-  const executable = executableFor(argv.shift()!)
+  const commandName = argv.shift()
+  if (commandName === undefined) {
+    throw new Error('documented source command must include an executable')
+  }
+  const executable = executableFor(commandName)
   return spawnSync(executable, argv, {
     cwd: fixture.repo,
     env: fixture.env,
@@ -62,7 +70,9 @@ function runDocumentedCommand(fixture: SourceInstallFixture, command: string) {
 }
 
 function assertSourceInstall(fixture: SourceInstallFixture, result: ReturnType<typeof spawnSync>): void {
-  expect(result.status, result.stdout + result.stderr).toBe(0)
+  const stdout = result.stdout?.toString() ?? ''
+  const stderr = result.stderr?.toString() ?? ''
+  expect(result.status, stdout + stderr).toBe(0)
 
   const installed = JSON.parse(readFileSync(join(
     fixture.profileDir,
@@ -83,7 +93,15 @@ function assertSourceInstall(fixture: SourceInstallFixture, result: ReturnType<t
     && call.argv.filter(argument => argument.startsWith('file:')).length === 1,
   )
   expect(tarballCalls).toHaveLength(1)
-  expect(tarballCalls[0].argv.find(argument => argument.startsWith('file:'))).toMatch(/^file:[A-Za-z]:[\\/]|^file:\//u)
+  const tarballCall = tarballCalls[0]
+  if (tarballCall === undefined) {
+    throw new Error('expected exactly one source tarball dsh call')
+  }
+  const tarballPath = tarballCall.argv.find(argument => argument.startsWith('file:'))
+  if (tarballPath === undefined) {
+    throw new Error('expected source tarball dsh call to include a file: path')
+  }
+  expect(tarballPath).toMatch(/^file:[A-Za-z]:[\\/]|^file:\//u)
 }
 
 describe('README source-install command contract', () => {
