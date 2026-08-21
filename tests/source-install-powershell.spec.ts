@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -79,12 +79,22 @@ function fakeBinDir(fixture: SourceInstallFixture): string {
   return bin
 }
 
+function platformExecutable(fixture: SourceInstallFixture, command: string): string {
+  const bin = fakeBinDir(fixture)
+  return process.platform === 'win32' ? join(bin, `${command}.cmd`) : join(bin, command)
+}
+
 function removeFakeCommand(fixture: SourceInstallFixture, command: string): void {
   const bin = fakeBinDir(fixture)
   for (const suffix of ['', '.cmd']) {
     const path = join(bin, command + suffix)
     if (existsSync(path)) rmSync(path, { force: true })
   }
+}
+
+function writePosixExecutable(path: string, contents: string): void {
+  writeFileSync(path, contents, { mode: 0o755 })
+  chmodSync(path, 0o755)
 }
 
 function installNpxProxy(fixture: SourceInstallFixture): string {
@@ -94,12 +104,13 @@ function installNpxProxy(fixture: SourceInstallFixture): string {
   removeFakeCommand(fixture, 'dsh')
   const marker = join(fixture.sandbox, 'npx-used')
   const npx = join(bin, 'npx')
-  writeFileSync(npx, `const fs = require('node:fs')
+  writePosixExecutable(npx, `#!/usr/bin/env node
+const fs = require('node:fs')
 const cp = require('node:child_process')
 fs.writeFileSync(${JSON.stringify(marker)}, 'used\\n')
 const result = cp.spawnSync(process.execPath, [${JSON.stringify(delegate)}, ...process.argv.slice(2).slice(4)], { stdio: 'inherit' })
 process.exit(result.status === null ? 1 : result.status)
-`, { mode: 0o755 })
+`)
   writeFileSync(npx + '.cmd', '@echo off\r\nnode "%~dp0npx" %*\r\n')
   return marker
 }
@@ -107,14 +118,15 @@ process.exit(result.status === null ? 1 : result.status)
 function installFailingNpx(fixture: SourceInstallFixture): void {
   const bin = fakeBinDir(fixture)
   const npx = join(bin, 'npx')
-  writeFileSync(npx, 'process.stderr.write("unexpected npx invocation\\n")\nprocess.exit(91)\n', { mode: 0o755 })
+  writePosixExecutable(npx, '#!/usr/bin/env node\nprocess.stderr.write("unexpected npx invocation\\n")\nprocess.exit(91)\n')
   writeFileSync(npx + '.cmd', '@echo off\r\nnode "%~dp0npx" %*\r\n')
 }
 
 function installOneShotDsh(fixture: SourceInstallFixture): void {
   const bin = fakeBinDir(fixture)
   const dsh = join(bin, 'dsh')
-  writeFileSync(dsh, `const fs = require('node:fs')
+  writePosixExecutable(dsh, `#!/usr/bin/env node
+const fs = require('node:fs')
 const callsFile = process.env.SOURCE_INSTALL_CALLS_FILE
 const argv = process.argv.slice(2)
 fs.appendFileSync(callsFile, JSON.stringify({ tool: 'dsh', argv, cwd: process.cwd() }) + '\\n')
@@ -126,7 +138,7 @@ if (argv.length === 1 && argv[0] === '--version') {
 }
 process.stderr.write('one-shot dsh cannot launch plugin add\\n')
 process.exit(2)
-`, { mode: 0o755 })
+`)
 }
 
 function writeSourceManifests(fixture: SourceInstallFixture, mutate: (pkg: Record<string, unknown>, manifest: Record<string, unknown>) => void): void {
@@ -224,7 +236,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
   it('uses a custom DSH_CMD executable for both source probe and install', () => {
     const fixture = createSourceInstallFixture()
     fixtures.push(fixture)
-    fixture.env.DSH_CMD = join(fakeBinDir(fixture), 'dsh.cmd')
+    fixture.env.DSH_CMD = platformExecutable(fixture, 'dsh')
     installFailingNpx(fixture)
 
     const result = runSource(fixture)
@@ -234,6 +246,28 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       ['--version'],
       ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
     ])
+  })
+
+  it('provides platform-compatible fake executables for POSIX and Windows launches', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    installFailingNpx(fixture)
+    installOneShotDsh(fixture)
+
+    for (const command of ['npx', 'dsh']) {
+      const executable = join(fakeBinDir(fixture), command)
+      const windowsWrapper = join(fakeBinDir(fixture), `${command}.cmd`)
+      expect(readFileSync(executable, 'utf8').split(/\r?\n/, 1)[0]).toBe('#!/usr/bin/env node')
+      expect(readFileSync(windowsWrapper, 'utf8')).toContain(`node "%~dp0${command}" %*`)
+      if (process.platform !== 'win32') {
+        expect(statSync(executable).mode & 0o111).not.toBe(0)
+      }
+    }
+
+    const customExecutable = platformExecutable(fixture, 'dsh')
+    expect(customExecutable).toBe(process.platform === 'win32'
+      ? join(fakeBinDir(fixture), 'dsh.cmd')
+      : join(fakeBinDir(fixture), 'dsh'))
   })
 
   it('fails closed when pnpm cannot launch even if an old tarball exists', () => {
