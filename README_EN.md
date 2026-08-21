@@ -2,13 +2,23 @@
 
 > Maintained repository, release version, DSH rc.8 baseline, compatibility package/plugin/service names, and the source-first channel.
 
+| Fact | Value |
+|---|---|
+| Maintained repository | [DSH Better Workbench](https://github.com/XiaoyaoLinghao/DSH-better-workbench) |
+| Release | `0.15.0-xlh.1` |
+| DSH baseline | `0.1.0-rc.8` |
+| npm package | `dsh-better-sidebar` |
+| Plugin id | `dsh-external/dsh-better-sidebar` |
+| Service | `ctx.betterSidebar` |
+| Distribution | source-only (源码优先) |
+| Upstream npm | `dsh-better-sidebar@latest` is the upstream channel, not this fork. |
+| Source success | Installed version `0.15.0-xlh.1` and `dsh-better-sidebar` in the profile bundle. |
+
 ## Core capabilities
 
 DSH Better Workbench is a session-isolated workbench for DeepSeek Harness. Its right sidebar and bottom panel provide a file tree, editing and preview, a real terminal, Git, browser, and background-task views. Layout, tabs, and panel state persist per session; built-in tabs and third-party extensions register through `ctx.betterSidebar`.
 
-The maintained repository is [XiaoyaoLinghao/DSH-better-workbench](https://github.com/XiaoyaoLinghao/DSH-better-workbench), release `0.15.0-xlh.1`. For DSH ecosystem compatibility, the npm package name remains `dsh-better-sidebar`, the plugin id remains `dsh-better-sidebar`, and the service remains `ctx.betterSidebar`.
-
-The source-install success conditions are installed version `0.15.0-xlh.1` and `dsh-better-sidebar` present in the profile bundle.
+For DSH ecosystem compatibility, the npm package name is `dsh-better-sidebar`, the plugin id is `dsh-external/dsh-better-sidebar`, and the service is `ctx.betterSidebar`.
 
 ## Native Sidechain
 
@@ -18,7 +28,7 @@ Native Sidechain is a normal, localizable, disableable sidebar tab whose state p
 - `/btw <question>` creates a one-shot, read-only child conversation.
 - `/side list` lists direct children of the current parent; the Subagent tab remains responsible for the complete topology, background jobs, and cross-session navigation.
 
-Both creation commands require a non-empty question. `fork` is the DSH subagent-provider semantic, not a Git fork. Host configuration uses nested YAML:
+Both creation commands require a non-empty question. `fork` is the DSH subagent-provider semantic: it creates a child-conversation snapshot from the completed parent history, not a Git fork. Host configuration uses nested YAML:
 
 ```yaml
 config:
@@ -27,16 +37,11 @@ config:
     readOnlyTools: [read, grep, glob]
 ```
 
-The Sidechain switch controls tab visibility and auto-open behavior; it does not unregister host commands. This module supports only DSH `0.1.0-rc.8`. Code adapted from the `dsh-sidechain` reference in `dsh-external/dsh-better-sidebar` keeps its provenance comments; the complete BSD-3-Clause copyright, conditions, and disclaimer are in [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES). Reference-project contributors do not endorse this project.
+The Sidechain switch controls tab visibility and auto-open behavior; it does not unregister host commands. This module supports only DSH `0.1.0-rc.8`. Code adapted from the `@dsh-external/dsh-sidechain` reference keeps its provenance comments; the complete BSD-3-Clause copyright, conditions, and disclaimer are in [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES). Reference-project contributors do not endorse this project.
 
 ## Source installation
 
-Prerequisites: DSH `0.1.0-rc.8` installed and able to start `dsh web`, Node.js ≥ 20, and pnpm ≥ 10. Clone the maintained repository and choose one platform command from its root:
-
-```bash
-git clone https://github.com/XiaoyaoLinghao/DSH-better-workbench.git
-cd DSH-better-workbench
-```
+Prerequisites: a checkout of the maintained repository, DSH `0.1.0-rc.8` installed and able to start `dsh web`, Node.js ≥ 20, and pnpm ≥ 10. Choose one platform command from the source repository root:
 
 <!-- source-install:bash -->
 ```bash
@@ -106,9 +111,10 @@ This npm package provides both host and client halves: the host provides session
 
 ## Security and limitations
 
-- File writes are atomic; routes use the Host-header trust fence and are restricted to the current session cwd.
+- The `/sidebar/file` media route and `/sidebar/html` HTML preview route reject paths outside the session cwd; file writes are atomic. The Host-header trust fence protects these HTTP routes.
 - HTML previews and browser content run in opaque-origin sandboxed iframes by default. Disabling the sandbox shows a warning and is intended only for fully trusted content.
-- The address bar rejects `javascript:`, `data:`, `file:`, and local addresses; sites restricted by `X-Frame-Options` or `frame-ancestors` may not embed.
+- Terminal processes start at the session cwd but are real, unrestricted shells; treat terminal commands as fully privileged operations in that environment.
+- The browser address bar rejects `javascript:`, `data:`, `file:`, and other dangerous schemes, and blocks loopback addresses except the DSH UI's own origin. Sites restricted by `X-Frame-Options` or `frame-ancestors` may not embed.
 - The Git panel does not provide push/pull/fetch; there is no file watcher, so refresh manually. Office preview (`.docx` / `.xlsx` / `.pptx`) is provided by a recommended plugin.
 - Narrow mobile viewports merge the bottom panel into the right sidebar; moving a terminal tab between panes remounts its shell.
 

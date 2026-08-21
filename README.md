@@ -2,13 +2,23 @@
 
 > 当前维护仓库、版本、DSH rc.8 基线、兼容包名/插件 id/服务、源码优先通道。
 
+| Fact | Value |
+|---|---|
+| Maintained repository | [DSH Better Workbench](https://github.com/XiaoyaoLinghao/DSH-better-workbench) |
+| Release | `0.15.0-xlh.1` |
+| DSH baseline | `0.1.0-rc.8` |
+| npm package | `dsh-better-sidebar` |
+| Plugin id | `dsh-external/dsh-better-sidebar` |
+| Service | `ctx.betterSidebar` |
+| Distribution | source-only（源码优先） |
+| Upstream npm | `dsh-better-sidebar@latest` 是上游发布通道，不是本 fork。 |
+| Source success | 安装版本为 `0.15.0-xlh.1`，且 profile bundle 包含 `dsh-better-sidebar`。 |
+
 ## 核心能力
 
 DSH Better Workbench 是面向 DeepSeek Harness 的会话隔离工作台：右侧栏和底部面板提供文件树、编辑与预览、真实终端、Git、浏览器和后台任务视图。布局、Tab 与面板状态按会话持久化；内置 Tab 和第三方扩展都通过 `ctx.betterSidebar` 服务注册。
 
-当前维护仓库是 [XiaoyaoLinghao/DSH-better-workbench](https://github.com/XiaoyaoLinghao/DSH-better-workbench)，发布版本为 `0.15.0-xlh.1`。为保持 DSH 生态兼容，npm 包名仍为 `dsh-better-sidebar`，插件 id 仍为 `dsh-better-sidebar`，服务仍为 `ctx.betterSidebar`。
-
-源码版成功条件：profile 中安装的版本为 `0.15.0-xlh.1`，且 profile bundle 包含 `dsh-better-sidebar`。
+为保持 DSH 生态兼容，npm 包名为 `dsh-better-sidebar`，插件 id 为 `dsh-external/dsh-better-sidebar`，服务为 `ctx.betterSidebar`。
 
 ## 原生 Sidechain
 
@@ -18,7 +28,7 @@ DSH Better Workbench 是面向 DeepSeek Harness 的会话隔离工作台：右�
 - `/btw <问题>` 创建一次性、只读的 child conversation。
 - `/side list` 列出当前父会话的直接 child；Subagent Tab 仍负责完整拓扑、后台任务和跨会话跳转。
 
-两条创建命令都要求非空问题。`fork` 是 DSH subagent provider 的语义，不是 Git fork。host 配置使用嵌套 YAML：
+两条创建命令都要求非空问题。`fork` 是 DSH subagent provider 的语义：它从已完成的父会话历史创建 child-conversation snapshot，不是 Git fork。host 配置使用嵌套 YAML：
 
 ```yaml
 config:
@@ -27,16 +37,11 @@ config:
     readOnlyTools: [read, grep, glob]
 ```
 
-Sidechain 开关只控制 Tab 可见性与自动打开，不注销 host 命令。本模块仅支持 DSH `0.1.0-rc.8`；改编自 `dsh-external/dsh-better-sidebar` 的 `dsh-sidechain` 参考代码保留 provenance 注释，完整 BSD-3-Clause 版权、条件与免责声明见 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES)。参考项目贡献者不代表本项目背书。
+Sidechain 开关只控制 Tab 可见性与自动打开，不注销 host 命令。本模块仅支持 DSH `0.1.0-rc.8`；改编自 `@dsh-external/dsh-sidechain` 的参考代码保留 provenance 注释，完整 BSD-3-Clause 版权、条件与免责声明见 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES)。参考项目贡献者不代表本项目背书。
 
 ## 源码安装
 
-前置条件：已安装并能启动 `dsh web` 的 DSH `0.1.0-rc.8`、Node.js ≥ 20、pnpm ≥ 10。克隆当前维护仓库后，从仓库根目录选择一个平台命令：
-
-```bash
-git clone https://github.com/XiaoyaoLinghao/DSH-better-workbench.git
-cd DSH-better-workbench
-```
+前置条件：已从维护仓库取得源码，并安装能启动 `dsh web` 的 DSH `0.1.0-rc.8`、Node.js ≥ 20、pnpm ≥ 10。从源码仓库根目录选择一个平台命令：
 
 <!-- source-install:bash -->
 ```bash
@@ -106,9 +111,10 @@ pnpm watch
 
 ## 安全与限制
 
-- 文件写入走原子操作，路由受 Host-header trust fence 保护，并限制在当前 session cwd 内。
+- `/sidebar/file` 媒体路由和 `/sidebar/html` HTML 预览路由拒绝会话 cwd 之外的路径；文件写入使用原子操作。Host-header trust fence 保护这些 HTTP 路由。
 - HTML 预览和浏览器默认运行在 opaque-origin sandbox iframe；关闭 sandbox 会显示警告，只应对完全可信内容使用。
-- 地址栏拒绝 `javascript:`、`data:`、`file:` 和本地地址；受 `X-Frame-Options` 或 `frame-ancestors` 限制的网站可能无法嵌入。
+- 终端进程从 session cwd 启动，但是真实且不受限的 shell；请把终端命令视为该环境中的完整权限操作。
+- 浏览器地址栏拒绝 `javascript:`、`data:`、`file:` 等危险 scheme，也拒绝 loopback 地址；DSH 自己的 UI origin 是例外。受 `X-Frame-Options` 或 `frame-ancestors` 限制的网站可能无法嵌入。
 - Git 面板不提供 push/pull/fetch；没有文件 watcher，需要手动刷新。Office 预览（`.docx` / `.xlsx` / `.pptx`）由推荐插件提供。
 - 移动端窄视口将底部面板合并到右侧栏；终端 Tab 跨 pane 移动时会重新挂载 shell。
 
