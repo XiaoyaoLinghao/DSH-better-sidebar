@@ -72,8 +72,47 @@ its quarantine preserved at:
 
 No quarantine directory was recursively deleted.
 
+## Follow-up debugging from `164d38b`
+
+The parent Task 4 type narrowing commit was present during this follow-up.
+`pnpm typecheck` and `git diff --check` both pass. No production installer,
+mount behavior, timeout threshold, or acceptance test was changed.
+
+The current-head default full unit run was **879 passed, 9 skipped, 13 failed**
+(56.73s). The source-install timeouts reproduced only under the full suite:
+
+- `source-install-bash.spec.ts`: `builds from the script repository and installs one absolute file tarball` (13.64s, default 5s); `adds all four build approvals idempotently` (16.20s, default 15s).
+- `source-install-powershell.spec.ts`: `preserves the absolute non-ASCII tarball as one file argument` (10.87s), `uses the PATH dsh executable for direct source probe and install` (7.55s), `uses the npx fallback executable with its fixed dsh prefix when dsh is absent` (8.02s), and `uses a custom DSH_CMD executable for both source probe and install` (6.21s); each exceeded the default 5s timeout.
+
+Vitest has no project `testTimeout` override in `vitest.config.ts`; file
+parallelism and fork workers remain enabled. The single hypothesis was that
+parallel child-process/PTY/filesystem load causes startup and cleanup jitter,
+not a source installer logic regression. Two minimal controls confirmed it:
+
+```text
+pnpm exec vitest run tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts --no-file-parallelism: 33 passed, 41.55s
+pnpm exec vitest run tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts --maxWorkers=1: 33 passed, 41.59s
+```
+
+The prior full mount lane remains **6/7** at current head (issue #248 was the
+only failure), quarantined non-destructively at:
+
+`C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-d50cc8a6ae0638cf-ae71e4cc7ffa6f33`
+
+A fresh real pinned rc.8 mount run of that failing test alone was **1/1
+passed** in 5.7s. Its preserved quarantine is:
+
+`C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-b2b4c2e00cabeb8c-6a64c76f93271065`
+
+The temporary diagnostic observer saw the replacement column connected and,
+in the passing run, the panel and replacement column converged to identical
+geometry. This supports nondeterministic full-lane resource/layout timing;
+there is no proven product or test-harness defect to fix within Task 5 scope.
+All quarantines remain intact.
+
 ## Commit status
 
-Task 5 acceptance changes are ready to commit after the parent agent reviews
-the documented Task 4 typecheck blocker and the environment-dependent mount
-results.
+Task 5 acceptance changes and this follow-up report are ready to commit. The
+overall acceptance gate remains open: the full unit run has known base and
+resource-contention failures, and the full rc.8 mount lane is 6/7 despite the
+isolated issue #248 rerun passing. No acceptance-complete claim is made here.
