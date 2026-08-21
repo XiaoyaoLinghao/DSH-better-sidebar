@@ -11,7 +11,8 @@ const PACKAGE_NAME = 'dsh-better-sidebar'
 const INTEGRATION_TIMEOUT = 30_000
 
 function detectPowerShell(): string | undefined {
-  for (const candidate of ['pwsh', 'powershell']) {
+  const candidates = process.platform === 'win32' ? ['powershell', 'pwsh'] : ['pwsh', 'powershell']
+  for (const candidate of candidates) {
     const probe = spawnSync(candidate, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {
       stdio: 'ignore',
     })
@@ -21,10 +22,34 @@ function detectPowerShell(): string | undefined {
 }
 
 const POWERSHELL = detectPowerShell()
+const WINDOWS_POWERSHELL = process.platform === 'win32' && (() => {
+  const probe = spawnSync('powershell', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'], { stdio: 'ignore' })
+  return !probe.error && probe.status === 0
+})()
 
 function runSource(fixture: SourceInstallFixture, ...args: string[]) {
   if (!POWERSHELL) throw new Error('PowerShell executable was not detected')
   return spawnSync(POWERSHELL, [
+    '-NoLogo',
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    join(fixture.repo, 'scripts', 'install.ps1'),
+    '-Source',
+    '-Profile',
+    'web',
+    ...args,
+  ], {
+    cwd: fixture.foreignCwd,
+    env: fixture.env,
+    encoding: 'utf8',
+  })
+}
+
+function runSourceWithExecutable(executable: string, fixture: SourceInstallFixture, ...args: string[]) {
+  return spawnSync(executable, [
     '-NoLogo',
     '-NoProfile',
     '-NonInteractive',
@@ -133,8 +158,6 @@ const argv = process.argv.slice(2)
 fs.appendFileSync(callsFile, JSON.stringify({ tool: 'dsh', argv, cwd: process.cwd() }) + '\\n')
 if (argv.length === 1 && argv[0] === '--version') {
   process.stdout.write('0.1.0-rc.8\\n')
-  try { fs.rmSync(__filename, { force: true }) } catch {}
-  try { fs.rmSync(__filename + '.cmd', { force: true }) } catch {}
   process.exit(0)
 }
 process.stderr.write('one-shot dsh cannot launch plugin add\\n')
@@ -304,10 +327,31 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     const result = runSource(fixture)
 
     expect(result.status).not.toBe(0)
-    expect(result.stdout + result.stderr).not.toContain('one-shot dsh cannot launch plugin add')
+    expect(result.stdout + result.stderr).toContain('one-shot dsh cannot launch plugin add')
     expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
       ['--version'],
+      ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
     ])
+  }, INTEGRATION_TIMEOUT)
+
+  it.each(['install', 'build', 'pack'] as const)('prints captured pnpm %s diagnostics before contextual error', (command) => {
+    const fixture = createSourceInstallFixture({ failPnpmCommand: command })
+    fixtures.push(fixture)
+
+    const result = runSource(fixture)
+
+    expect(result.status).not.toBe(0)
+    expect(result.stdout + result.stderr).toContain(`fake pnpm failure: ${command}`)
+    expect(result.stdout + result.stderr).toContain(`pnpm ${command} 失败`)
+  }, INTEGRATION_TIMEOUT)
+
+  it.skipIf(!WINDOWS_POWERSHELL)('reads BOMless UTF-8 source manifests through literal Windows PowerShell', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+
+    const result = runSourceWithExecutable('powershell', fixture)
+
+    expect(result.status, result.stdout + result.stderr).toBe(0)
   }, INTEGRATION_TIMEOUT)
 
   it('keeps four build approvals idempotent across repeated installs', () => {
@@ -368,7 +412,11 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(workspaceText(wrongDsh)).toBe(workspaceBefore)
     expect(readFileSync(join(wrongDsh.profileDir, 'package.json'), 'utf8')).toBe(profileBefore)
 
-    for (const options of [{ installedVersion: '0.15.0-xlh.0' }, { registerBundle: false }]) {
+    for (const options of [
+      { installedVersion: '0.15.0-xlh.0' },
+      { installedVersion: '0.15.0-XLH.1' },
+      { registerBundle: false },
+    ]) {
       const fixture = createSourceInstallFixture(options)
       fixtures.push(fixture)
       const result = runSource(fixture)

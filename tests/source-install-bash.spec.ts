@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -78,6 +78,25 @@ describe('Bash source installer', () => {
 
     const installedPackage = JSON.parse(readFileSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'), 'utf8')) as { version: string }
     expect(installedPackage.version).toBe(SOURCE_VERSION)
+  }, INTEGRATION_TIMEOUT)
+
+  it('preserves a custom DSH_CMD executable path containing spaces', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    const customDir = join(fixture.sandbox, 'custom dsh bin')
+    const customExecutable = join(customDir, 'dsh')
+    mkdirSync(customDir, { recursive: true })
+    copyFileSync(join(fixture.sandbox, 'fake bin', 'dsh'), customExecutable)
+    chmodSync(customExecutable, 0o755)
+    fixture.env.DSH_CMD = customExecutable
+
+    const result = runSource(fixture)
+
+    expect(result.status, result.stdout + result.stderr).toBe(0)
+    expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv.map(normalize))).toEqual([
+      ['--version'],
+      ['plugin', '--profile', 'web', 'add', `file:${normalize(join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`))}`],
+    ])
   }, INTEGRATION_TIMEOUT)
 
   it('adds all four build approvals idempotently', () => {

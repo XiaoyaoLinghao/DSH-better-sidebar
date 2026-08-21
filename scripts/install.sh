@@ -196,14 +196,23 @@ resolve_spec() {
   esac
 }
 
-# 组装 dsh CLI 调用：优先 PATH 上的 dsh，缺省 npx 拉官方包
+# 组装 dsh CLI 调用：优先 PATH 上的 dsh，缺省 npx 拉官方包。
+# 在函数内部逐个传递可执行文件和固定前缀，避免 DSH_CMD 路径含空格时被拆词。
 dsh_cli() {
   if command -v "$DSH_CMD" >/dev/null 2>&1; then
-    printf '%s' "$DSH_CMD"
+    "$DSH_CMD" "$@"
   elif command -v npx >/dev/null 2>&1; then
-    printf 'npx -y --package @deepseek-ai/dsh dsh'
+    npx -y --package @deepseek-ai/dsh dsh "$@"
   else
     die "未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定 dsh 路径。"
+  fi
+}
+
+dsh_cli_label() {
+  if command -v "$DSH_CMD" >/dev/null 2>&1; then
+    printf '%s' "$DSH_CMD"
+  else
+    printf '%s' 'npx -y --package @deepseek-ai/dsh dsh'
   fi
 }
 
@@ -249,8 +258,8 @@ process.stdout.write(pkg.version);
 ' "$ROOT")" || die "源码 manifest 校验失败。"
   TARBALL="$ARTIFACT_DIR/dsh-better-sidebar-${SOURCE_VERSION}.tgz"
   cd "$ROOT" || die "无法切换到源码目录：$ROOT"
-  CLI="$(dsh_cli)"
-  say "目标：$CLI plugin --profile $PROFILE_NAME add file:$TARBALL（源码构建，profile: ${PROFILE_DIR}）"
+  CLI_LABEL="$(dsh_cli_label)"
+  say "目标：$CLI_LABEL plugin --profile $PROFILE_NAME add file:$TARBALL（源码构建，profile: ${PROFILE_DIR}）"
 
   if [ "$DRY_RUN" = true ]; then
     say "[dry-run] 源码根目录：$ROOT"
@@ -260,11 +269,11 @@ process.stdout.write(pkg.version);
     say "[dry-run] 步骤 2：cd $ROOT && pnpm install --frozen-lockfile"
     say "[dry-run] 步骤 3：cd $ROOT && pnpm build"
     say "[dry-run] 步骤 4：cd $ROOT && pnpm pack --pack-destination $ARTIFACT_DIR"
-    say "[dry-run] 步骤 5：$CLI plugin --profile $PROFILE_NAME add file:$TARBALL"
+    say "[dry-run] 步骤 5：$CLI_LABEL plugin --profile $PROFILE_NAME add file:$TARBALL"
     exit 0
   fi
 
-  OBSERVED_DSH_VERSION="$($CLI --version 2>&1 | tail -n 1)"
+  OBSERVED_DSH_VERSION="$(dsh_cli --version 2>&1 | tail -n 1)"
   [ "$OBSERVED_DSH_VERSION" = "0.1.0-rc.8" ] \
     || die "源码版要求 DSH 0.1.0-rc.8，当前为 ${OBSERVED_DSH_VERSION}。"
 
@@ -278,13 +287,13 @@ process.stdout.write(pkg.version);
   INSTALL_SPEC="file:$TARBALL"
 else
   SPEC="$(resolve_spec "$VERSION_SPEC")"
-  CLI="$(dsh_cli)"
   INSTALL_SPEC="$PKG@$SPEC"
-  say "目标：$CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC（profile: ${PROFILE_DIR}）"
+  CLI_LABEL="$(dsh_cli_label)"
+  say "目标：$CLI_LABEL plugin --profile $PROFILE_NAME add $INSTALL_SPEC（profile: ${PROFILE_DIR}）"
 
   if [ "$DRY_RUN" = true ]; then
     say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（${PKG}）"
-    say "[dry-run] 步骤 2：执行 $CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC（安装 + bundle 自动注册）"
+    say "[dry-run] 步骤 2：执行 $CLI_LABEL plugin --profile $PROFILE_NAME add $INSTALL_SPEC（安装 + bundle 自动注册）"
     say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
     say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
     if [ "$RESTART" = true ]; then say "[dry-run] 步骤 5：pm2 restart dsh-web"; else say "[dry-run] 步骤 5：提示用户手动重启 DSH"; fi
@@ -296,8 +305,8 @@ else
 fi
 
 # 官方 CLI 安装 + bundle 自动注册（含挂载）
-say "执行 $CLI plugin --profile $PROFILE_NAME add $INSTALL_SPEC ..."
-if ! $CLI plugin --profile "$PROFILE_NAME" add "$INSTALL_SPEC" 2>&1 | tail -n +1; then
+say "执行 $CLI_LABEL plugin --profile $PROFILE_NAME add $INSTALL_SPEC ..."
+if ! dsh_cli plugin --profile "$PROFILE_NAME" add "$INSTALL_SPEC" 2>&1 | tail -n +1; then
   warn "dsh plugin add 失败。已预写 allowBuilds 与 minimumReleaseAgeExclude，仍失败的可能原因："
   warn "  - 网络/登录问题：npm registry 不可达或需要登录。"
   warn "  - 依赖安装冲突：可手动重试 cd $PROFILE_DIR && pnpm install。"

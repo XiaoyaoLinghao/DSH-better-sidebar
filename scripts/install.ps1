@@ -1,23 +1,21 @@
 ﻿## =============================================================================
 # dsh-better-sidebar 一键安装脚本（官方 CLI 方式，Windows PowerShell 5.1+ / pwsh）
 #
-# 通过 DSH 官方插件命令安装 npm 包并自动挂载：
-#   dsh plugin --profile web add dsh-better-sidebar@<version>
+# 通过 DSH 官方插件命令安装当前源码构建的 tarball 并自动挂载：
+#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web
 #
 # 包内声明了 dsh.bundle.patch（cordis.patch.yml）：CLI 的 bundle 协调会把它
 # 自动加进 profile 的 dsh.profile.bundles，下次启动即挂载——无需手动写
 # cordis.patch.yml 挂载行。符合仓库硬约束：不修改 DSH 源码，插件永远作为
 # 独立包被 profile 引用。
 #
-# 用法（任选其一）：
-#   # 默认最新版
-#   irm https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1 | iex
-#   # 指定版本 / 装完重启
-#   & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.2 -Restart
-#   # 本地保存后运行
-#   powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.10.2 -DryRun
+# 用法（源码优先）：
+#   git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
+#   cd DSH-better-sidebar
 #   # 从源码构建并安装到 profile
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Source -Profile web
+#   # 仅预览源码安装步骤
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -Source -Profile web -DryRun
 #   # 修复 node-pty 依赖（终端提示「node-pty 加载失败」时用，见 issue #140）
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Repair
 #
@@ -146,6 +144,17 @@ function Test-NativeSuccess {
   return $Result.Succeeded -eq $true -and $Result.ExitCode -is [int] -and $Result.ExitCode -eq 0
 }
 
+function Write-NativeDiagnostics {
+  param([object]$Result)
+  foreach ($line in @($Result.Output)) {
+    if ($null -eq $line) { continue }
+    $text = [string]$line
+    # 失败输出用于诊断，但不把常见凭据字段原样回显到终端日志。
+    $text = [regex]::Replace($text, '(?i)(token|password|secret|authorization)(\s*[:=]\s*)\S+', '$1$2[REDACTED]')
+    Write-Host $text
+  }
+}
+
 # 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
 # node-pty/protobufjs/@deepseek-ai/dsh-subprocess-local/koffi 构建脚本、放行本插件新版本
 function Ensure-WorkspaceSettings {
@@ -265,8 +274,8 @@ if ($Source) {
   $ROOT = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
   $ARTIFACT_DIR = Join-Path $ROOT '.artifacts'
   try {
-    $sourcePackage = Get-Content -Raw -LiteralPath (Join-Path $ROOT 'package.json') -ErrorAction Stop | ConvertFrom-Json
-    $sourceManifest = Get-Content -Raw -LiteralPath (Join-Path $ROOT 'dsh.plugin.json') -ErrorAction Stop | ConvertFrom-Json
+    $sourcePackage = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ROOT 'package.json') -ErrorAction Stop | ConvertFrom-Json
+    $sourceManifest = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $ROOT 'dsh.plugin.json') -ErrorAction Stop | ConvertFrom-Json
   } catch {
     Die "源码 manifest 校验失败：$($_.Exception.Message)"
   }
@@ -319,12 +328,21 @@ if ($Source) {
   # 源码构建必须先获得 DSH 版本确认，再写入 profile 配置。
   Ensure-WorkspaceSettings
   $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('install', '--frozen-lockfile')
-  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm install 失败（退出码 $($pnpmResult.ExitCode)）。" }
+  if (-not (Test-NativeSuccess $pnpmResult)) {
+    Write-NativeDiagnostics $pnpmResult
+    Die "pnpm install 失败（退出码 $($pnpmResult.ExitCode)）。"
+  }
   $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('build')
-  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm build 失败（退出码 $($pnpmResult.ExitCode)）。" }
+  if (-not (Test-NativeSuccess $pnpmResult)) {
+    Write-NativeDiagnostics $pnpmResult
+    Die "pnpm build 失败（退出码 $($pnpmResult.ExitCode)）。"
+  }
   New-Item -ItemType Directory -Force -Path $ARTIFACT_DIR | Out-Null
   $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('pack', '--pack-destination', $ARTIFACT_DIR)
-  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm pack 失败（退出码 $($pnpmResult.ExitCode)）。" }
+  if (-not (Test-NativeSuccess $pnpmResult)) {
+    Write-NativeDiagnostics $pnpmResult
+    Die "pnpm pack 失败（退出码 $($pnpmResult.ExitCode)）。"
+  }
   if (-not (Test-Path -LiteralPath $TARBALL -PathType Leaf)) {
     Die "pnpm pack 未生成预期 tarball：$TARBALL"
   }
@@ -360,6 +378,7 @@ Say "执行 $CLI_LABEL plugin --profile $Profile add $INSTALL_SPEC ..."
 $addResult = Invoke-Native -Executable $CLI -Arguments $cliArgs
 $addOut = $addResult.Output
 if (-not (Test-NativeSuccess $addResult)) {
+  Write-NativeDiagnostics $addResult
   Warn 'dsh plugin add 失败。已预写 allowBuilds 与 minimumReleaseAgeExclude，仍失败的可能原因：'
   Warn '  - 网络/登录问题：npm registry 不可达或需要登录。'
   Warn "  - 依赖安装冲突：可手动重试 cd $PROFILE_DIR; pnpm install。"
@@ -368,7 +387,7 @@ if (-not (Test-NativeSuccess $addResult)) {
 $addOut | ForEach-Object { $_ }
 
 # 步骤 3：校验 bundle 已注册（挂载生效的判据）
-$pkgJson = Get-Content -Raw (Join-Path $PROFILE_DIR 'package.json') | ConvertFrom-Json
+$pkgJson = Get-Content -Raw -Encoding UTF8 (Join-Path $PROFILE_DIR 'package.json') | ConvertFrom-Json
 $bundles = $pkgJson.dsh.profile.bundles
 if ($bundles -notcontains $PKG) {
   Warn 'dsh-better-sidebar 未出现在 dsh.profile.bundles 中——挂载未注册。'
@@ -380,11 +399,12 @@ Say "bundle 已注册：dsh.profile.bundles 包含 $PKG（下次启动自动挂�
 if ($Source) {
   $installedManifestPath = Join-Path $PROFILE_DIR "node_modules\$PKG\package.json"
   try {
-    $installedPackage = Get-Content -Raw -LiteralPath $installedManifestPath -ErrorAction Stop | ConvertFrom-Json
+    $installedPackage = Get-Content -Raw -Encoding UTF8 -LiteralPath $installedManifestPath -ErrorAction Stop | ConvertFrom-Json
   } catch {
     Die "源码安装版本校验失败：无法读取 $installedManifestPath。"
   }
-  if ($installedPackage.name -ne $PKG -or [string]$installedPackage.version -ne $SOURCE_VERSION) {
+  if (-not [string]::Equals([string]$installedPackage.name, $PKG, [StringComparison]::Ordinal) -or
+      -not [string]::Equals([string]$installedPackage.version, $SOURCE_VERSION, [StringComparison]::Ordinal)) {
     Die "源码安装版本校验失败：profile 中的 $PKG 不是 $SOURCE_VERSION。"
   }
   Say "源码版本已校验：$PKG@$SOURCE_VERSION"

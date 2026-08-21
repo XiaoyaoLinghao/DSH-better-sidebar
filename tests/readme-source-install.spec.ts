@@ -43,16 +43,14 @@ function readmes(): Array<{ name: string; path: string }> {
   ]
 }
 
-function executableFor(command: string): string {
-  if (command !== 'powershell') return command
-  for (const candidate of ['pwsh', 'powershell']) {
-    const probe = spawnSync(candidate, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {
-      stdio: 'ignore',
-    })
-    if (!probe.error && probe.status === 0) return candidate
-  }
-  throw new Error('PowerShell executable was not detected')
+function executableAvailable(command: string): boolean {
+  const probe = spawnSync(command, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0'], {
+    stdio: 'ignore',
+  })
+  return !probe.error && probe.status === 0
 }
+
+const POWERSHELL_README_AVAILABLE = executableAvailable('powershell')
 
 function runDocumentedCommand(fixture: SourceInstallFixture, command: string) {
   const argv = command.trim().split(/\s+/u)
@@ -60,8 +58,7 @@ function runDocumentedCommand(fixture: SourceInstallFixture, command: string) {
   if (commandName === undefined) {
     throw new Error('documented source command must include an executable')
   }
-  const executable = executableFor(commandName)
-  return spawnSync(executable, argv, {
+  return spawnSync(commandName, argv, {
     cwd: fixture.repo,
     env: fixture.env,
     encoding: 'utf8',
@@ -121,9 +118,17 @@ describe('README source-install command contract', () => {
   })
 
   for (const readme of readmes()) {
+    it(`${readme.name} keeps both source command markers structurally extractable`, () => {
+      const text = readFileSync(readme.path, 'utf8')
+      expect(commandAfterMarker(text, 'bash')).toMatch(/^bash scripts\/install\.sh --source --profile \S+$/u)
+      expect(commandAfterMarker(text, 'powershell')).toMatch(/^powershell -ExecutionPolicy Bypass -File scripts\/install\.ps1 -Source -Profile \S+$/u)
+    })
+  }
+
+  for (const readme of readmes()) {
     const text = readFileSync(readme.path, 'utf8')
     for (const marker of ['bash', 'powershell'] as const) {
-      it(`${readme.name} ${marker} command installs the source bundle`, () => {
+      it.skipIf(marker === 'powershell' && !POWERSHELL_README_AVAILABLE)(`${readme.name} ${marker} command installs the source bundle`, () => {
         const fixture = createSourceInstallFixture()
         fixtures.push(fixture)
         const command = commandAfterMarker(text, marker)

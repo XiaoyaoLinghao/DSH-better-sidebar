@@ -201,3 +201,42 @@ Follow-up verification:
 - A fresh real pinned rc.8 mount lane remains **7/7**; its non-destructive
   quarantine is preserved at
   `C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-4dfe08c761753d89-fa27f31648049302`.
+
+## Final Sol review fix wave
+
+The final review identified five Important installer/README issues. The Luna
+fix wave added behavioral regressions first, observed the expected RED state,
+then repaired the implementation:
+
+1. PowerShell now reads BOMless UTF-8 `package.json`, `dsh.plugin.json`, the
+   profile manifest, and the installed manifest with explicit `-Encoding UTF8`.
+   The README test executes the literal documented `powershell` executable;
+   it skips only the behavioral PowerShell README cases when that executable
+   is unavailable, without substituting `pwsh`. Windows PowerShell coverage
+   includes a literal `powershell` BOMless-manifest install case.
+2. Bash no longer expands a scalar CLI string. The direct custom executable
+   and the npx fallback pass the executable and fixed prefix as quoted command
+   arguments, with a regression for a custom executable path containing spaces
+   and exact call/tarball assertions.
+3. PowerShell installed package `name` and `version` use ordinal exact
+   equality; a case-mismatched installed version is required to fail.
+4. Captured pnpm install/build/pack and official plugin-add output is emitted
+   before contextual errors, with common credential fields redacted. Tests
+   assert both representative pnpm diagnostics and plugin-add diagnostics.
+5. The PowerShell installer header/help is source-first for the current
+   `https://github.com/XiaoyaoLinghao/DSH-better-sidebar` fork and contains no
+   active upstream `omdsh-dev` install example.
+
+Fix-wave verification:
+
+- `pnpm exec vitest run tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts --no-file-parallelism`: **38 passed**.
+- `pnpm exec vitest run tests/script-safety.spec.ts tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts --no-file-parallelism`: **55 passed**.
+- Literal Windows PowerShell parse check, `bash -n scripts/install.sh`, and
+  `git diff --check`: **passed**.
+- `pnpm typecheck` and `pnpm build`: **passed**.
+- Fresh normal `pnpm test`: **891 passed, 9 skipped, 7 failed**. The four
+  assertion failures remain the known base failures (PTY repair command,
+  CRLF discard, missing Git author, missing Git committer); the two PTY quota
+  timeouts and the credential-isolation test timeout are Windows
+  ConPTY/resource-contention failures under the full parallel run. No source
+  installer or README test failed in this run.
