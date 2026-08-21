@@ -1,11 +1,11 @@
-# dsh-better-sidebar
+# DSH Better Workbench
 
 <!-- Hero -->
 <div align="center">
-  <b style="font-size: 1.15em;">A service-oriented sidebar framework, and a complete workbench out of the box</b><br /><br />
+  <b style="font-size: 1.15em;">DSH Better Workbench: a service-oriented sidebar and complete workbench</b><br /><br />
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
-  <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Git panel" src="https://img.shields.io/badge/-Git%20panel-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
+  <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Git panel" src="https://img.shields.io/badge/-Git%20panel-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Sidechain /side /btw" src="https://img.shields.io/badge/-Sidechain%20%2Fside%20%2Fbtw-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
   register new sidebar pages and file viewers via <code>registerTab</code> / <code>registerFileViewer</code>.
 </div>
@@ -14,9 +14,11 @@
   🌏 <a href="./README.md">中文</a> · <a href="./README_EN.md"><b>English</b></a>
 </div>
 
+> ℹ️ The product is now named **DSH Better Workbench**; the npm package `dsh-better-sidebar`, plugin id, and `ctx.betterSidebar` service remain compatible.
+
 <div align="center">
   <video src="https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86" muted autoplay loop playsinline controls width="100%"></video>
-  <img alt="dsh-better-sidebar workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
+  <img alt="DSH Better Workbench" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
 </div>
 
 ## ✨ Features
@@ -26,6 +28,7 @@
 - **💻 Real Terminal**: xterm.js + node-pty real shell, reconnect with transcript replay; optionally injects `terminal_*` tools for the model
 - **🌿 Git Panel**: real diff + VSCode-style diff tabs, history, right-click to stage / commit / revert
 - **🧩 Background Tasks**: agent topology + background tasks (exit codes / live output / force-kill)
+- **⛓️ Native Sidechain**: `/side`, `/btw`, and `/side list` for session side conversations
 - **🪟 Dual Workbench**: right sidebar + bottom panel; drag tabs to split / merge panes (cross-panel), mobile auto-merges into a full-width drawer
 - **🔁 Session Isolation**: layout / tabs / panels persisted per session, stale state auto-purged
 - **⚙️ Declarative Settings**: per-item toggles in the "Side Cards" settings section, secondary settings via the gear dialog
@@ -40,6 +43,10 @@
   <a href="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0"><img width="45%" alt="Service API base screenshot" src="https://github.com/user-attachments/assets/946f7028-4967-461e-a750-d1b5056b62d0" /></a>
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="45%" alt="Add Plugins screenshot" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
+
+### v0.15.0-xlh.1
+
+This is the XiaoyaoLinghao-maintained **DSH Better Workbench** fork. It keeps the `dsh-better-sidebar` package name, plugin id, and `ctx.betterSidebar` service compatible, adds native Sidechain (`/side`, `/btw`, `/side list`), and makes the source installer the recommended channel. The installer requires DSH `0.1.0-rc.8` and mounts the built package through official bundle coordination. Historical upstream implementation and BSD-3-Clause attribution remain in this repository and [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES).
 
 ### v0.14.0
 
@@ -151,84 +158,62 @@ The compatibility baseline is DSH `0.1.0-rc.8` (rc.7 and earlier are unsupported
 - 🖱️ **Tab-bar scroll**: mouse-wheel horizontal scrolling on the tab bar
 - 🐛 **Fixes**: remote access 403 (trust fence now uses `trustedHosts`), sidebar crash [#31](https://github.com/omdsh-dev/DSH-better-sidebar/issues/31), Windows HTML-preview drive-path
 
-## 🚀 Installation
+## 🚀 Installation (source-first)
 
-**Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10.
-
-```sh
-dsh plugin --profile web add dsh-better-sidebar@latest
-```
-
-Then **hard-refresh the browser** (Cmd/Ctrl+Shift+R) to see the sidebar (DSH hot-reloads client changes; only host-half updates need a restart).
-
-<details>
-<summary><b>Updating</b></summary>
+**Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10. Clone the current fork, then run the installer from the cloned repository:
 
 ```sh
-dsh plugin --profile web add dsh-better-sidebar@latest
+git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
+cd DSH-better-sidebar
 ```
 
-or bump the version in `~/.dsh/profiles/web/package.json` (e.g. `"^0.13.0"`) and run `pnpm install`. Then hard-refresh the browser (Cmd/Ctrl+Shift+R) — client changes do not need a DSH restart.
+Choose one platform command:
 
-</details>
-
-<details>
-<summary><b>Troubleshooting</b></summary>
-
-| Symptom | Cause & fix |
-|---|---|
-| `Ignored build scripts` | pnpm 11 blocked build scripts. Run `pnpm approve-builds --all` in the profile directory (`~/.dsh/profiles/web`). |
-| `minimum release age` / version `< 24h` | The release is younger than 24 hours. Wait, or re-run once (pnpm auto-adds `minimumReleaseAgeExclude`). |
-| "profile directory not found" | Run `dsh web` once so it initializes `~/.dsh/profiles/web`. |
-| Two sidebars on the page | Double-mount. Old hand-written line: `~/.dsh/profiles/web/cordis.patch.yml` still has `- insert: ... better-sidebar ...` — delete it (a same-id duplicate mount makes the loader fail loudly with `duplicate loader entry id`). When an aggregate bundle (e.g. `@linxin666/dsh-web-ui-all`) mounts this package under a **different** id, the plugin's own bundle patch backs off automatically since 0.13.x (it detects an already-enabled mount of the same package name and does not mount itself) — no manual fix needed; if it still double-mounts, make sure the aggregate bundle precedes `dsh-better-sidebar` in `dsh.profile.bundles`. |
-| Terminal fails on Windows | `node-pty` relies on prebuilt binaries; if none match your Node version, install a build toolchain (VS Build Tools). Mainstream Node versions are usually covered. |
-| Terminal shows "node-pty failed to load" | The `node-pty` install is missing or broken (e.g. pnpm skipped its build script). The terminal banner shows a repair command — copy it into a terminal/cmd on the DSH machine and run it (in `~/.dsh/profiles/web`: `pnpm approve-builds --all && pnpm rebuild node-pty`), then restart DSH and click Retry. The plugin and DSH core share the same `node-pty@^1.1.0`, so the repair restores both. |
-| `dsh: command not found` | Install DSH first, or run `npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest`. |
-
-</details>
-
-<details>
-<summary><b>Install from source / develop (optional — alternative to the npm flow)</b></summary>
-
-To debug local changes or track the dev branch, point the dependency at a local clone and build it yourself:
-
-```text
-1. git clone https://github.com/omdsh-dev/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
-   cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
-2. In ~/.dsh/profiles/web/package.json dependencies write "dsh-better-sidebar": "link:<absolute path of the clone>"
-3. Append this mount line to ~/.dsh/profiles/web/cordis.patch.yml (to pick the terminal shell, add `config.shell`; `config.shellArgs` starts it with explicit args — when non-empty they replace the default `-l`. When omitted the host resolves `$SHELL` / the login shell / powershell.exe):
-   - insert:
-       - id: better-sidebar
-         name: 'dsh-better-sidebar'
-         config:
-           shell: /bin/zsh
-           shellArgs:
-             - --noprofile
-             - --no-rc
-4. Run pnpm install in ~/.dsh/profiles/web
-5. Restart DSH and hard-refresh
+<!-- source-install:bash -->
+```bash
+bash scripts/install.sh --source --profile web
 ```
 
-Update: `git pull && pnpm install && pnpm build` → just hard-refresh the browser (client changes hot-reload; only host-half changes need a DSH restart). To switch back to the npm channel, restore `"dsh-better-sidebar": "^0.13.0"` and re-run `pnpm install`.
+<!-- source-install:powershell -->
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web
+```
 
-</details>
+The installer builds `dsh-better-sidebar-0.15.0-xlh.1.tgz` and installs it through the official CLI bundle coordination. After success, hard-refresh the browser (Cmd/Ctrl+Shift+R).
 
-<details>
-<summary><b>Install via plugin-registry (optional — use either this or the main flow)</b></summary>
+### For DSH / automation agents
 
-Prerequisite: DSH with [plugin-registry](https://github.com/dsh-external/plugin-registry) integrated (`dsh registry` available). **Enabling both channels double-mounts** (the Node half loads twice, the page gets two sidebars).
+- Run from the root of the cloned repository and select exactly one platform command above.
+- Success requires installed version `0.15.0-xlh.1` and `dsh-better-sidebar` in the profile bundle.
+- The installer does not implicitly restart DSH; hard-refresh is enough, with a manual host-half restart only when needed.
+- If the command fails, stop and report the failure. Do not fall back to npm.
+
+> ⚠️ **Channel warning**: `dsh-better-sidebar@latest` is the upstream npm channel and **does not install this fork**. Use the source command above for this fork.
+
+### Updating
 
 ```sh
-git clone https://github.com/omdsh-dev/DSH-better-sidebar.git && cd DSH-better-sidebar
-pnpm install && pnpm build
-node scripts/package-registry.mjs   # assemble the registry/ staging (manifest + artifacts + README, not committed)
-dsh registry install ./registry     # install (disabled by default)
-dsh registry enable dsh-external/dsh-better-sidebar
+git pull
+bash scripts/install.sh --source --profile web
 ```
 
-Update: `git pull && pnpm install && pnpm build` → `node scripts/package-registry.mjs` → `dsh registry uninstall/install/enable`. Remove the other channel's mount before switching.
+PowerShell users should run `git pull`, then rerun the PowerShell source command above.
 
-</details>
+### Uninstall and rollback
+
+Use the official remove command to uninstall:
+
+```sh
+dsh plugin --profile web remove dsh-better-sidebar
+```
+
+After a source install, retain `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`. To roll back, run:
+
+```sh
+dsh plugin --profile web add file:<clone-directory>/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz
+```
+
+If installation fails, stop; do not automatically switch to `dsh-better-sidebar@latest`.
 
 ## ⌨️ Keyboard Shortcuts
 

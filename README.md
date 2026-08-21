@@ -1,11 +1,11 @@
-# dsh-better-sidebar
+# DSH Better Workbench
 
 <!-- Hero -->
 <div align="center">
-  <b style="font-size: 1.15em;">一个服务化的侧边栏框架，一套开箱即用的完整工作台</b><br /><br />
+  <b style="font-size: 1.15em;">DSH Better Workbench：服务化侧边栏与完整工作台</b><br /><br />
   <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
   <a href="https://dshfind.com/zh/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=zh" /></a><br /><br />
-  <img alt="文件管理" src="https://img.shields.io/badge/-文件管理-4d6bfe" /> <img alt="编辑预览" src="https://img.shields.io/badge/-编辑预览-4d6bfe" /> <img alt="内嵌浏览器" src="https://img.shields.io/badge/-内嵌浏览器-4d6bfe" /> <img alt="真实终端" src="https://img.shields.io/badge/-真实终端-4d6bfe" /> <img alt="Git 面板" src="https://img.shields.io/badge/-Git%20面板-4d6bfe" /> <img alt="后台任务" src="https://img.shields.io/badge/-后台任务-4d6bfe" /> <img alt="插件接入" src="https://img.shields.io/badge/-插件接入-4d6bfe" /><br /><br />
+  <img alt="文件管理" src="https://img.shields.io/badge/-文件管理-4d6bfe" /> <img alt="编辑预览" src="https://img.shields.io/badge/-编辑预览-4d6bfe" /> <img alt="内嵌浏览器" src="https://img.shields.io/badge/-内嵌浏览器-4d6bfe" /> <img alt="真实终端" src="https://img.shields.io/badge/-真实终端-4d6bfe" /> <img alt="Git 面板" src="https://img.shields.io/badge/-Git%20面板-4d6bfe" /> <img alt="后台任务" src="https://img.shields.io/badge/-后台任务-4d6bfe" /> <img alt="Sidechain /side /btw" src="https://img.shields.io/badge/-Sidechain%20%2Fside%20%2Fbtw-4d6bfe" /> <img alt="插件接入" src="https://img.shields.io/badge/-插件接入-4d6bfe" /><br /><br />
   <b>右侧栏 + 底部面板双工作台</b>，并把 <code>ctx.betterSidebar</code> 服务开放给所有插件——<br />
   通过 <code>registerTab</code> / <code>registerFileViewer</code> 注册新的侧边栏页面与文件预览器。
 </div>
@@ -14,8 +14,10 @@
   🌏 <a href="./README.md"><b>中文</b></a> · <a href="./README_EN.md">English</a>
 </div>
 
+> ℹ️ 产品名称已更名为 **DSH Better Workbench**；npm 包名 `dsh-better-sidebar`、插件 id 与 `ctx.betterSidebar` 服务保持兼容。
+
 <div align="center">
-  <img alt="dsh-better-sidebar 工作台截图" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
+  <img alt="DSH Better Workbench 工作台截图" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
   <video src="https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86" muted autoplay loop playsinline controls width="100%"></video>
 </div>
 
@@ -26,6 +28,7 @@
 - **💻 真实终端**：xterm.js + node-pty 真实 shell，断线重连回放；可选为模型注入 `terminal_*` 工具
 - **🌿 Git 面板**：真 diff + VSCode 式 diff tab、历史、右键暂存 / 提交 / 还原
 - **🧩 后台任务页**：subagent 拓扑 + 后台任务（退出码 / 实时输出 / 强制终止）
+- **⛓️ 原生 Sidechain**：`/side`、`/btw`、`/side list` 创建并管理侧会话
 - **🪟 双工作台**：右侧栏 + 底部面板；拖 Tab 拆分 / 合并分栏（可跨面板），移动端自动合并全宽抽屉
 - **🔁 会话隔离**：布局 / Tab / 面板按会话持久化，陈旧状态自动净化
 - **⚙️ 声明式设置**：设置页「侧边卡片」逐项独立开关，二级设置经齿轮弹窗
@@ -42,7 +45,10 @@
   <a href="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e"><img width="33%" alt="添加插件截图" src="https://github.com/user-attachments/assets/d4385b7e-aab4-425d-a5c4-2da5da81a34e" /></a>
 </div>
 
-### v0.14.0
+### v0.15.0-xlh.1
+
+这是 XiaoyaoLinghao 维护的 **DSH Better Workbench** fork：保留 `dsh-better-sidebar` 包名、插件 id 与 `ctx.betterSidebar` 服务兼容性，新增原生 Sidechain（`/side`、`/btw`、`/side list`）以及源码优先安装器。安装器要求 DSH `0.1.0-rc.8`，构建并通过官方 bundle 协调挂载；历史 upstream 实现与 BSD-3-Clause 归属仍保留在本仓库与 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES) 中。
+
 
 > ⚠️ **本版适配 DSH 0.1.0-rc.8**：全部 `@deepseek-ai/*` peer / devDependencies 升至 `^0.1.0-rc.8`（含传递依赖，lockfile 零 rc.7 残留），`cordis` 同步 `^4.0.0-rc.8`，CI 挂载冒烟钉版 `@deepseek-ai/dsh@0.1.0-rc.8`。**rc.7 及更早的 DSH 环境将无法解析本版依赖，请先升级 DSH**。自 v0.13.1 以来的全部更改：
 
@@ -120,84 +126,62 @@ Sidechain 只展示当前父会话的直接子会话并支持 `/side` 的内联�
 - 🐛 **node-pty 加载失败不再拖垮 server**（[#140](https://github.com/omdsh-dev/DSH-better-sidebar/issues/140)）：宿主半改为懒加载 node-pty，缺失时插件照常挂载，终端以修复提示横幅（可复制命令 + 重试按钮）呈现，agent 终端工具自动跳过
 - 🧪 测试工程：单元测试拆分（#141）+ smoke 偶发失败修复
 
-## 🚀 安装
+## 🚀 安装（源码优先）
 
-**前置**：已装好 DSH（`dsh web` 能正常运行），Node.js ≥ 20、pnpm ≥ 10。
-
-```sh
-dsh plugin --profile web add dsh-better-sidebar@latest
-```
-
-装完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可看到侧边栏（DSH 对 client 改动热加载，无需重启；仅 host 半更新时需要重启）。
-
-<details>
-<summary><b>更新</b></summary>
+**前置**：已装好 DSH（`dsh web` 能正常运行），Node.js ≥ 20、pnpm ≥ 10。先克隆当前 fork，并从克隆目录执行安装器：
 
 ```sh
-dsh plugin --profile web add dsh-better-sidebar@latest
+git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
+cd DSH-better-sidebar
 ```
 
-也可把 `~/.dsh/profiles/web/package.json` 里的版本号改高后 `pnpm install`。改完**硬刷新浏览器**（Cmd/Ctrl+Shift+R）即可（client 改动无需重启 DSH）。
+选择一个平台命令：
 
-</details>
-
-<details>
-<summary><b>常见问题</b></summary>
-
-| 现象 | 原因与解决 |
-|---|---|
-| 报 `Ignored build scripts` | pnpm 11 拦截构建脚本。在 profile 目录（`~/.dsh/profiles/web`）跑 `pnpm approve-builds --all`。 |
-| 报 `minimum release age` / 版本不足 24h | 装的版本发布不足 24 小时。等 24h 或重跑一次（pnpm 会自动补 `minimumReleaseAgeExclude`）。 |
-| 报「找不到 profile 目录」 | 先跑一次 `dsh web`，让它初始化 `~/.dsh/profiles/web`。 |
-| 页面出现**两个侧边栏** | 双挂载。旧的手动挂载行：`~/.dsh/profiles/web/cordis.patch.yml` 还留着 `- insert: ... better-sidebar ...`，删掉那段（同 id 重复挂载 loader 会直接报 `duplicate loader entry id`）。聚合包（如 `@linxin666/dsh-web-ui-all`）以**不同 id** 挂载本包时，0.13.x 起插件自身 bundle patch 会自动退让（检测到已有启用中的同包名挂载就不挂自己），无需手动处理；若仍双挂载，先确认聚合包的 bundle 顺序在 `dsh-better-sidebar` 之前。 |
-| Windows 下终端无法使用 | `node-pty` 依赖预编译二进制；若当前 Node 版本没有对应产物，需装编译工具链（VS Build Tools）。主流 Node 版本一般已有预编译。 |
-| 终端提示「node-pty 加载失败」 | `node-pty` 安装缺失/损坏（如 pnpm 拦截了构建脚本）。终端横幅会给出修复命令：复制到 DSH 所在环境的终端/cmd 执行（在 `~/.dsh/profiles/web` 下 `pnpm approve-builds --all && pnpm rebuild node-pty`），完成后重启 DSH 并点重试。插件与 DSH 核心使用同一 `node-pty@^1.1.0`，修复后两者同步恢复。 |
-| 提示 `dsh: command not found` | 先安装 DSH；或直接用 `npx -y --package @deepseek-ai/dsh dsh plugin --profile web add dsh-better-sidebar@latest`。 |
-
-</details>
-
-<details>
-<summary><b>从源码安装 / 开发（可选，替代 npm 方式）</b></summary>
-
-调试本地改动或跟随开发分支时，把依赖指向本地克隆并自行构建：
-
-```text
-1. git clone https://github.com/omdsh-dev/DSH-better-sidebar.git ~/Code/DSH-better-sidebar
-   cd ~/Code/DSH-better-sidebar && pnpm install && pnpm build
-2. ~/.dsh/profiles/web/package.json 的 dependencies 写 "dsh-better-sidebar": "link:<克隆目录绝对路径>"
-3. ~/.dsh/profiles/web/cordis.patch.yml 追加挂载行（需要指定终端 shell 时，在行内加 `config.shell`；`config.shellArgs` 可带参启动，非空时替换默认的 `-l`。不填则自动解析 `$SHELL` / 登录 shell / powershell.exe）：
-   - insert:
-       - id: better-sidebar
-         name: 'dsh-better-sidebar'
-         config:
-           shell: /bin/zsh
-           shellArgs:
-             - --noprofile
-             - --no-rc
-4. 在 ~/.dsh/profiles/web 执行 pnpm install
-5. 硬刷新浏览器（Cmd/Ctrl+Shift+R）即可看到效果（client 改动无需重启 DSH；host 半改动才需重启）
+<!-- source-install:bash -->
+```bash
+bash scripts/install.sh --source --profile web
 ```
 
-更新：`git pull && pnpm install && pnpm build` → 硬刷新浏览器即可（client 改动热加载生效，无需重启 DSH；host 半改动才需重启）。切回 npm 通道时，把依赖改回 `"dsh-better-sidebar": "^0.13.0"` 再 `pnpm install`。
+<!-- source-install:powershell -->
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web
+```
 
-</details>
+安装器会构建 `dsh-better-sidebar-0.15.0-xlh.1.tgz`，再通过官方 CLI bundle 协调安装；成功后硬刷新浏览器（Cmd/Ctrl+Shift+R）。
 
-<details>
-<summary><b>通过 plugin-registry 安装（可选，与上述二选一）</b></summary>
+### 供 DSH / 自动化代理读取
 
-前置：DSH 已集成 [plugin-registry](https://github.com/dsh-external/plugin-registry)（`dsh registry` 可用）。**同时启用两个通道会双挂载**（Node 半挂两次、页面两个侧边栏）。
+- 必须从已克隆的仓库根目录运行；按平台选择上面的一个命令。
+- 成功条件是已安装版本为 `0.15.0-xlh.1` 且 profile bundle 包含 `dsh-better-sidebar`。
+- 安装器不会隐式重启 DSH；只需硬刷新，host 半改动才按需手动重启。
+- 任一命令失败都必须停止并报告错误，不得回退到 npm 通道。
+
+> ⚠️ **通道警告**：`dsh-better-sidebar@latest` 是上游 npm 通道，**不会安装此 fork**；本项目请使用上面的源码安装命令。
+
+### 更新
 
 ```sh
-git clone https://github.com/omdsh-dev/DSH-better-sidebar.git && cd DSH-better-sidebar
-pnpm install && pnpm build
-node scripts/package-registry.mjs   # 组装 registry/ 暂存（含清单 + 产物 + README，不入库）
-dsh registry install ./registry     # 安装（默认禁用）
-dsh registry enable dsh-external/dsh-better-sidebar
+git pull
+bash scripts/install.sh --source --profile web
 ```
 
-更新：`git pull && pnpm install && pnpm build` → `node scripts/package-registry.mjs` → `dsh registry uninstall/install/enable`。切换通道前先移除另一通道的挂载。
+PowerShell 用户在 `git pull` 后重新运行上面的 PowerShell 源码命令即可。
 
-</details>
+### 卸载与回滚
+
+卸载使用官方命令：
+
+```sh
+dsh plugin --profile web remove dsh-better-sidebar
+```
+
+源码安装成功后保留 `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`，需要回滚时可重新执行：
+
+```sh
+dsh plugin --profile web add file:<克隆目录>/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz
+```
+
+安装失败必须停止；不要自动切换到 `dsh-better-sidebar@latest`。
 
 ## ⌨️ 快捷键
 
