@@ -8,6 +8,7 @@ import { createSourceInstallFixture, readSourceCalls, type SourceCall, type Sour
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SOURCE_VERSION = '0.15.0-xlh.1'
 const PACKAGE_NAME = 'dsh-better-sidebar'
+const INTEGRATION_TIMEOUT = 30_000
 
 function detectPowerShell(): string | undefined {
   for (const candidate of ['pwsh', 'powershell']) {
@@ -182,7 +183,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(readFileSync(join(fixture.profileDir, 'cordis.patch.yml'), 'utf8')).toBe(patchBefore)
     expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
     expect(readSourceCalls(fixture.callsFile)).toEqual([])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('preserves the absolute non-ASCII tarball as one file argument', () => {
     const fixture = createSourceInstallFixture()
@@ -203,7 +204,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
 
     const installedPackage = JSON.parse(readFileSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'), 'utf8')) as { version: string }
     expect(installedPackage.version).toBe(SOURCE_VERSION)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('uses the PATH dsh executable for direct source probe and install', () => {
     const fixture = createSourceInstallFixture()
@@ -216,7 +217,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       ['--version'],
       ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
     ])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('uses the npx fallback executable with its fixed dsh prefix when dsh is absent', () => {
     const fixture = createSourceInstallFixture()
@@ -231,7 +232,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       ['--version'],
       ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
     ])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('uses a custom DSH_CMD executable for both source probe and install', () => {
     const fixture = createSourceInstallFixture()
@@ -246,7 +247,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       ['--version'],
       ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
     ])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('provides platform-compatible fake executables for POSIX and Windows launches', () => {
     const fixture = createSourceInstallFixture()
@@ -286,7 +287,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(readFileSync(tarball, 'utf8')).toBe('stale artifact\n')
     expect(readSourceCalls(fixture.callsFile).some(call => call.tool === 'dsh' && call.argv[0] === 'plugin')).toBe(false)
     expect(existsSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'))).toBe(false)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('fails closed when dsh plugin add cannot launch after a successful probe', () => {
     const fixture = createSourceInstallFixture()
@@ -307,7 +308,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
       ['--version'],
     ])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('keeps four build approvals idempotent across repeated installs', () => {
     const fixture = createSourceInstallFixture()
@@ -328,7 +329,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(text.match(/^\s*minimumReleaseAgeExclude:\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+['"]?@deepseek-ai\/\*['"]?\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+dsh-better-sidebar\s*$/gm) ?? []).toHaveLength(1)
-  }, 15_000)
+  }, INTEGRATION_TIMEOUT)
 
   it.each(['install', 'build', 'pack'] as const)('does not call dsh plugin add after pnpm %s failure', (command) => {
     const fixture = createSourceInstallFixture({ failPnpmCommand: command })
@@ -349,7 +350,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     })))
     expect(readSourceCalls(fixture.callsFile).some(call => call.tool === 'dsh' && call.argv[0] === 'plugin')).toBe(false)
     expect(existsSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'))).toBe(false)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('rejects wrong DSH and failed version or bundle verification', () => {
     const wrongDsh = createSourceInstallFixture({ dshVersion: '0.1.0-rc.7' })
@@ -373,7 +374,7 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       const result = runSource(fixture)
       expect(result.status).not.toBe(0)
     }
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it.each([
     ['missing both source versions', (pkg: Record<string, unknown>, manifest: Record<string, unknown>) => {
@@ -395,5 +396,5 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(result.status).not.toBe(0)
     expect(readSourceCalls(fixture.callsFile)).toEqual([])
     expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
-  })
+  }, INTEGRATION_TIMEOUT)
 })

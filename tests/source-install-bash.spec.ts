@@ -6,6 +6,7 @@ import { createSourceInstallFixture, readSourceCalls, type SourceCall, type Sour
 
 const SOURCE_VERSION = '0.15.0-xlh.1'
 const PACKAGE_NAME = 'dsh-better-sidebar'
+const INTEGRATION_TIMEOUT = 30_000
 
 function runSource(fixture: SourceInstallFixture, ...args: string[]) {
   return spawnSync('bash', [join(fixture.repo, 'scripts', 'install.sh'), '--source', '--profile', 'web', ...args], {
@@ -56,7 +57,7 @@ describe('Bash source installer', () => {
     expect(readFileSync(join(fixture.profileDir, 'cordis.patch.yml'), 'utf8')).toBe(patchBefore)
     expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
     expect(readSourceCalls(fixture.callsFile)).toEqual([])
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('builds from the script repository and installs one absolute file tarball', () => {
     const fixture = createSourceInstallFixture()
@@ -77,7 +78,7 @@ describe('Bash source installer', () => {
 
     const installedPackage = JSON.parse(readFileSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'), 'utf8')) as { version: string }
     expect(installedPackage.version).toBe(SOURCE_VERSION)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('adds all four build approvals idempotently', () => {
     const fixture = createSourceInstallFixture()
@@ -98,7 +99,7 @@ describe('Bash source installer', () => {
     expect(text.match(/^\s*minimumReleaseAgeExclude:\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+['"]?@deepseek-ai\/\*['"]?\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+dsh-better-sidebar\s*$/gm) ?? []).toHaveLength(1)
-  }, 15_000)
+  }, INTEGRATION_TIMEOUT)
 
   it.each(['install', 'build', 'pack'] as const)('stops before plugin add when pnpm %s fails', (command) => {
     const fixture = createSourceInstallFixture({ failPnpmCommand: command })
@@ -120,7 +121,7 @@ describe('Bash source installer', () => {
     })))
     expect(calls.some(call => call.tool === 'dsh' && call.argv[0] === 'plugin')).toBe(false)
     expect(existsSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'))).toBe(false)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('rejects a DSH version other than 0.1.0-rc.8 before profile writes', () => {
     const fixture = createSourceInstallFixture({ dshVersion: '0.1.0-rc.7' })
@@ -137,7 +138,7 @@ describe('Bash source installer', () => {
     }])
     expect(workspaceText(fixture)).toBe(workspaceBefore)
     expect(readFileSync(join(fixture.profileDir, 'package.json'), 'utf8')).toBe(profileBefore)
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('fails when installed version or bundle registration cannot be verified', () => {
     for (const options of [{ installedVersion: '0.15.0-xlh.0' }, { registerBundle: false }]) {
@@ -146,5 +147,5 @@ describe('Bash source installer', () => {
       const result = runSource(fixture)
       expect(result.status).not.toBe(0)
     }
-  })
+  }, INTEGRATION_TIMEOUT)
 })

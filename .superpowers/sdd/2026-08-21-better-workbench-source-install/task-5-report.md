@@ -116,3 +116,42 @@ Task 5 acceptance changes and this follow-up report are ready to commit. The
 overall acceptance gate remains open: the full unit run has known base and
 resource-contention failures, and the full rc.8 mount lane is 6/7 despite the
 isolated issue #248 rerun passing. No acceptance-complete claim is made here.
+
+## Per-test timeout hardening follow-up
+
+To remove the proven full-suite resource-contention failure mode without
+changing production behavior or Vitest global concurrency, every Bash and
+PowerShell source-installer test that invokes `runSource` now uses the named
+`INTEGRATION_TIMEOUT = 30_000` budget. This includes parameterized cases and
+replaces the previous 15-second idempotency budget. Parser-only and
+platform-file checks retain the default timeout.
+
+Verification after the hardening:
+
+- `pnpm exec vitest run tests/source-install-bash.spec.ts tests/source-install-powershell.spec.ts tests/readme-source-install.spec.ts`:
+  **33 passed** with normal file parallelism and no CLI timeout/concurrency
+  override.
+- `pnpm typecheck`: **passed**.
+- Exact `pnpm test`: **887 passed, 9 skipped, 5 failed**, with one unhandled
+  ConPTY error (55.60s). There were no source-install or README behavior test
+  failures.
+
+The five remaining failed tests are classified as follows:
+
+1. `tests/pty-deps.spec.ts`: Windows PTY repair-command expectation — the
+   known base failure.
+2. `tests/smoke.spec.ts`: CRLF normalization in discard — the known base
+   failure.
+3. `tests/smoke.spec.ts`: missing Git author identity for revert — the known
+   base failure.
+4. `tests/smoke.spec.ts`: missing Git committer identity for cherry-pick — the
+   known base failure.
+5. `tests/smoke.spec.ts`: PTY manager quota/respawn test exceeded the default
+   5-second test budget — a Windows ConPTY/resource-contention failure, not a
+   branch-specific source-install failure.
+
+Vitest also reported one unhandled `Signals not supported on windows` error
+from `tests/agent-pty.spec.ts`, which is the known ConPTY/environment category.
+The prior clean-base comparison recorded the same four assertion failures plus
+ConPTY worker errors. No assertions were weakened and no mount threshold was
+changed.
