@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const helper = resolve(process.cwd(), 'scripts/safe-temp.mjs')
+const INTEGRATION_TIMEOUT = 30_000
 
 function invoke(...args: string[]) {
   return spawnSync(process.execPath, [helper, ...args], { encoding: 'utf8' })
@@ -352,7 +353,7 @@ fs.writeFileSync(process.env.DSH_PROBE_CAPTURE, JSON.stringify({ argv: process.a
     } finally {
       rmSync(sandbox, { recursive: true, force: true })
     }
-  })
+  }, INTEGRATION_TIMEOUT)
 
   it('executes the pinned rc.8 bin directly and passes scoped build approvals', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-probe.'))

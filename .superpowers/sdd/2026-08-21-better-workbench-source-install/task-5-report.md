@@ -265,3 +265,24 @@ Verification for this wave:
 - GREEN: combined installer/README/safety suite: **59 passed**.
 - `pnpm typecheck`, literal PowerShell parse, `bash -n scripts/install.sh`,
   and `git diff --check`: **passed**.
+
+## Final full-suite timeout fix
+
+The exact full-suite run at `91b03d9` showed the new credential-isolation
+probe taking 6.364 seconds under external-process contention, exceeding the
+default 5-second Vitest budget. The test itself passed in the focused safety
+suite. The fix only applies the existing named `INTEGRATION_TIMEOUT = 30_000`
+budget to that one test; assertions, probe behavior, global configuration,
+and product/scripts are unchanged.
+
+Verification:
+
+- Pre-fix RED: exact full `pnpm test` reported only the credential-isolation
+  test as the branch-introduced timeout; focused safety remained green.
+- Post-fix focused `tests/script-safety.spec.ts`: **17 passed**.
+- Post-fix exact `pnpm test`: **896 passed, 9 skipped, 6 failed, 1 unhandled
+  error**. The credential-isolation test and all source-install tests passed.
+  Remaining failures are the four known base assertions (PTY repair command,
+  CRLF discard, missing Git author, missing Git committer), two Windows
+  ConPTY PTY-manager timeout tests, and one Windows ConPTY unhandled
+  `Signals not supported on windows` error.
