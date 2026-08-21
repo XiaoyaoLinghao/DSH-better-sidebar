@@ -653,6 +653,7 @@ describe('version and feature detection (v0.12.0)', () => {
   it('reports the plugin version in lockstep with package.json', () => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const pkg = JSON.parse(require('node:fs').readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
+    expect(SIDEBAR_SERVICE_VERSION).toBe('0.15.0-xlh.1')
     expect(SIDEBAR_SERVICE_VERSION).toBe(pkg.version)
     expect(createBetterSidebarService(createSidebarStore()).version).toBe(SIDEBAR_SERVICE_VERSION)
   })

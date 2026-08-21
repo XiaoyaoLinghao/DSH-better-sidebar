@@ -80,6 +80,15 @@ function pressedCount(html: string, value: string): number {
 }
 
 describe('SideCardSection declarative inventory', () => {
+  it('renders the DSH Better Workbench product badge and version', () => {
+    const { store, service } = mount()
+    const container = renderSection(store, service)
+    const textContent = container.replace(/<!-- -->/g, '')
+    expect(textContent).toContain('DSH Better Workbench')
+    expect(textContent).toContain('v0.15.0-xlh.1')
+    expect(textContent).not.toContain('DSH-better-sidebarv')
+  })
+
   it('renders one small card per registered tab: icon + title + type id + pressed state', () => {
     const { store, service } = mount()
     const html = renderSection(store, service)

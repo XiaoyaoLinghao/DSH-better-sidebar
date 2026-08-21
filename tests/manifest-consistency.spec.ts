@@ -34,6 +34,8 @@ interface PluginManifest {
 interface PackageJson {
   name: string
   version: string
+  description?: string
+  repository?: { type?: string; url?: string }
   files?: string[]
 }
 
@@ -81,6 +83,16 @@ describe('registry manifest consistency (dsh.plugin.json)', () => {
 
   it('version matches package.json', () => {
     expect(manifest.version).toBe(pkg.version)
+  })
+
+  it('identifies the compatible DSH Better Workbench fork', () => {
+    expect(pkg.name).toBe('dsh-better-sidebar')
+    expect(manifest.id).toBe('dsh-external/dsh-better-sidebar')
+    expect(pkg.version).toBe('0.15.0-xlh.1')
+    expect(manifest.version).toBe('0.15.0-xlh.1')
+    expect(pkg.description).toContain('DSH Better Workbench')
+    expect(manifest.description).toContain('DSH Better Workbench')
+    expect(pkg.repository?.url).toBe('https://github.com/XiaoyaoLinghao/DSH-better-sidebar')
   })
 
   it('requires the rc.8 DSH engine and ships third-party notices', () => {
