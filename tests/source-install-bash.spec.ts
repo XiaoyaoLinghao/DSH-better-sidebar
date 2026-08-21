@@ -1,6 +1,6 @@
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createSourceInstallFixture, readSourceCalls, type SourceCall, type SourceInstallFixture } from './helpers/source-install-fixture.ts'
 
@@ -57,6 +57,34 @@ describe('Bash source installer', () => {
     expect(readFileSync(join(fixture.profileDir, 'cordis.patch.yml'), 'utf8')).toBe(patchBefore)
     expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
     expect(readSourceCalls(fixture.callsFile)).toEqual([])
+  }, INTEGRATION_TIMEOUT)
+
+  it('fails dry-run when neither dsh nor npx is available without writes or child calls', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    const bin = join(fixture.sandbox, 'fake bin')
+    for (const command of ['dsh', 'npx']) {
+      rmSync(join(bin, command), { force: true })
+      rmSync(join(bin, `${command}.cmd`), { force: true })
+    }
+    copyFileSync(process.execPath, join(bin, 'node.exe'))
+    writeFileSync(join(bin, 'node'), `#!/bin/sh
+exec "${process.execPath.replaceAll('\\', '/')}" "$@"
+`, { mode: 0o755 })
+    chmodSync(join(bin, 'node'), 0o755)
+    const bashDir = (process.env.PATH ?? '').split(delimiter).find(entry => existsSync(join(entry, 'bash.exe')))
+    if (!bashDir) throw new Error('test requires a Bash executable directory')
+    fixture.env.PATH = [bin, bashDir].join(delimiter)
+    fixture.env.Path = fixture.env.PATH
+
+    const result = runSource(fixture, '--dry-run')
+
+    const output = result.stdout + result.stderr
+    expect(result.status, `${output} ${result.error?.message ?? ''}`).not.toBe(0)
+    expect(output, result.error?.message ?? '').toContain('未找到 dsh 或 npx')
+    expect(result.stdout + result.stderr).not.toContain('[dry-run] 步骤 5')
+    expect(readSourceCalls(fixture.callsFile)).toEqual([])
+    expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
   }, INTEGRATION_TIMEOUT)
 
   it('builds from the script repository and installs one absolute file tarball', () => {

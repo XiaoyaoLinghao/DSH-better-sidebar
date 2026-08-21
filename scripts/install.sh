@@ -70,7 +70,12 @@ done
 DSH_HOME="${DSH_HOME:-${HOME:-${USERPROFILE:-}}/.dsh}"
 REGISTRY="${REGISTRY:-https://registry.npmjs.org}"
 PKG="dsh-better-sidebar"
-DSH_CMD="${DSH_CMD:-dsh}"
+if [ "${DSH_CMD+x}" = x ]; then
+  DSH_CMD_CUSTOM=true
+else
+  DSH_CMD_CUSTOM=false
+  DSH_CMD="dsh"
+fi
 
 RESTART=false
 DRY_RUN=false
@@ -196,24 +201,40 @@ resolve_spec() {
   esac
 }
 
-# 组装 dsh CLI 调用：优先 PATH 上的 dsh，缺省 npx 拉官方包。
-# 在函数内部逐个传递可执行文件和固定前缀，避免 DSH_CMD 路径含空格时被拆词。
-dsh_cli() {
-  if command -v "$DSH_CMD" >/dev/null 2>&1; then
-    "$DSH_CMD" "$@"
+# 解析并组装 dsh CLI 调用：自定义 DSH_CMD 必须可执行；否则优先 PATH 上的
+# dsh，缺省回退 npx。解析结果在 dry-run 与实际执行中保持一致。
+DSH_CLI_MODE=""
+DSH_CLI_LABEL=""
+resolve_dsh_cli() {
+  if [ "$DSH_CMD_CUSTOM" = true ]; then
+    [ -n "$DSH_CMD" ] && command -v "$DSH_CMD" >/dev/null 2>&1 \
+      || die "DSH_CMD 不可用：${DSH_CMD:-（空）}。请指定可执行的 dsh 路径。"
+    DSH_CLI_MODE="direct"
+    DSH_CLI_LABEL="$DSH_CMD"
+  elif command -v dsh >/dev/null 2>&1; then
+    DSH_CMD="dsh"
+    DSH_CLI_MODE="direct"
+    DSH_CLI_LABEL="dsh"
   elif command -v npx >/dev/null 2>&1; then
+    DSH_CLI_MODE="npx"
+    DSH_CLI_LABEL="npx -y --package @deepseek-ai/dsh dsh"
+  else
+    die "未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或设置 DSH_CMD 指向可执行文件。"
+  fi
+}
+
+dsh_cli() {
+  if [ "$DSH_CLI_MODE" = direct ]; then
+    "$DSH_CMD" "$@"
+  elif [ "$DSH_CLI_MODE" = npx ]; then
     npx -y --package @deepseek-ai/dsh dsh "$@"
   else
-    die "未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定 dsh 路径。"
+    die "DSH CLI 尚未解析。"
   fi
 }
 
 dsh_cli_label() {
-  if command -v "$DSH_CMD" >/dev/null 2>&1; then
-    printf '%s' "$DSH_CMD"
-  else
-    printf '%s' 'npx -y --package @deepseek-ai/dsh dsh'
-  fi
+  printf '%s' "$DSH_CLI_LABEL"
 }
 
 # 前置校验
@@ -258,6 +279,7 @@ process.stdout.write(pkg.version);
 ' "$ROOT")" || die "源码 manifest 校验失败。"
   TARBALL="$ARTIFACT_DIR/dsh-better-sidebar-${SOURCE_VERSION}.tgz"
   cd "$ROOT" || die "无法切换到源码目录：$ROOT"
+  resolve_dsh_cli
   CLI_LABEL="$(dsh_cli_label)"
   say "目标：$CLI_LABEL plugin --profile $PROFILE_NAME add file:$TARBALL（源码构建，profile: ${PROFILE_DIR}）"
 
@@ -288,6 +310,7 @@ process.stdout.write(pkg.version);
 else
   SPEC="$(resolve_spec "$VERSION_SPEC")"
   INSTALL_SPEC="$PKG@$SPEC"
+  resolve_dsh_cli
   CLI_LABEL="$(dsh_cli_label)"
   say "目标：$CLI_LABEL plugin --profile $PROFILE_NAME add $INSTALL_SPEC（profile: ${PROFILE_DIR}）"
 

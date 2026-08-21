@@ -148,6 +148,16 @@ function installFailingNpx(fixture: SourceInstallFixture): void {
   writeFileSync(npx + '.cmd', '@echo off\r\nnode "%~dp0npx" %*\r\n')
 }
 
+function installDiagnosticPnpm(fixture: SourceInstallFixture, diagnostic: string): void {
+  const bin = fakeBinDir(fixture)
+  const pnpm = join(bin, 'pnpm')
+  writePosixExecutable(pnpm, `#!/usr/bin/env node
+process.stderr.write(${JSON.stringify(diagnostic)})
+process.exit(17)
+`)
+  writeFileSync(pnpm + '.cmd', '@echo off\r\nnode "%~dp0pnpm" %*\r\n')
+}
+
 function installOneShotDsh(fixture: SourceInstallFixture): void {
   const bin = fakeBinDir(fixture)
   const dsh = join(bin, 'dsh')
@@ -343,6 +353,36 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
     expect(result.status).not.toBe(0)
     expect(result.stdout + result.stderr).toContain(`fake pnpm failure: ${command}`)
     expect(result.stdout + result.stderr).toContain(`pnpm ${command} 失败`)
+  }, INTEGRATION_TIMEOUT)
+
+  it('redacts credential-shaped pnpm diagnostics while preserving compiler context', () => {
+    const fixture = createSourceInstallFixture({ failPnpmCommand: 'install' })
+    fixtures.push(fixture)
+    const secrets = [
+      'bearer-secret',
+      'json-token-secret',
+      'json-password-secret',
+      'json-api-key-secret',
+      'json-secret-secret',
+      'npm-auth-token-secret',
+    ]
+    const diagnostic = [
+      'Authorization: Bearer bearer-secret',
+      '{"token":"json-token-secret","password":"json-password-secret","apiKey":"json-api-key-secret","secret":"json-secret-secret"}',
+      '//registry.npmjs.org/:_authToken=npm-auth-token-secret',
+      'compiler error: package workbench failed to compile',
+    ].join('\n')
+    installDiagnosticPnpm(fixture, diagnostic)
+
+    const result = runSource(fixture)
+    const output = result.stdout + result.stderr
+
+    expect(result.status).not.toBe(0)
+    for (const secret of secrets) {
+      expect(output.includes(secret), 'diagnostic redaction leaked a credential').toBe(false)
+    }
+    expect(output).toContain('compiler error: package workbench failed to compile')
+    expect(output).toContain('pnpm install 失败')
   }, INTEGRATION_TIMEOUT)
 
   it.skipIf(!WINDOWS_POWERSHELL)('reads BOMless UTF-8 source manifests through literal Windows PowerShell', () => {

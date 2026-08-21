@@ -240,3 +240,28 @@ Fix-wave verification:
   timeouts and the credential-isolation test timeout are Windows
   ConPTY/resource-contention failures under the full parallel run. No source
   installer or README test failed in this run.
+
+## Scoped-review regression fix wave
+
+The scoped follow-up found two Important regressions and was handled with
+behavior-first RED/GREEN tests:
+
+- PowerShell diagnostics now redact only deterministic credential-shaped
+  fields: `Authorization: Bearer`, minified JSON token/password/API-key/secret
+  fields, and npm `:_authToken=` values. Ordinary compiler/package/CLI error
+  context remains visible. The regression supplies distinct secret values and
+  asserts each is absent from failure output without embedding secrets in
+  assertion snapshots.
+- Bash resolves the CLI before dry-run output. A user-supplied `DSH_CMD` must
+  be executable; otherwise PATH `dsh` or the npx fallback must exist. The
+  resolved mode and label are reused for dry-run and execution. A fake PATH
+  retaining only Bash/Node proves the dsh+npx-missing dry-run fails before
+  writes or child calls.
+
+Verification for this wave:
+
+- RED: both new regression tests failed against `740c0c3` (credential values
+  leaked; missing CLI produced no validation message).
+- GREEN: combined installer/README/safety suite: **59 passed**.
+- `pnpm typecheck`, literal PowerShell parse, `bash -n scripts/install.sh`,
+  and `git diff --check`: **passed**.

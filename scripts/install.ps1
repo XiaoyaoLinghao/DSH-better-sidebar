@@ -149,8 +149,11 @@ function Write-NativeDiagnostics {
   foreach ($line in @($Result.Output)) {
     if ($null -eq $line) { continue }
     $text = [string]$line
-    # 失败输出用于诊断，但不把常见凭据字段原样回显到终端日志。
-    $text = [regex]::Replace($text, '(?i)(token|password|secret|authorization)(\s*[:=]\s*)\S+', '$1$2[REDACTED]')
+    # 只处理明确的凭据字段/格式；普通编译器、包管理器和 CLI 上下文保持可读。
+    $text = [regex]::Replace($text, '(?i)(Authorization\s*:\s*Bearer\s+)\S+', '$1[REDACTED]')
+    $text = [regex]::Replace($text, '(?i)(//[^\s\r\n]+:_authToken=)\S+', '$1[REDACTED]')
+    $text = [regex]::Replace($text, '(?i)("(?:token|password|api[-_ ]?key|secret)"\s*:\s*")([^"]*)(")', '$1[REDACTED]$3')
+    $text = [regex]::Replace($text, '(?i)(\b(?:token|password|api[-_ ]?key|secret)\s*[:=]\s*)([^\s,;}]+)', '$1[REDACTED]')
     Write-Host $text
   }
 }
