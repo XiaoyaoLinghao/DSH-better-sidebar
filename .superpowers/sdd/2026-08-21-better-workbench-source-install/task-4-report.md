@@ -62,3 +62,19 @@ test run emitted existing tsdown deprecation warnings for `external` and
 ## Concerns
 
 None. No push was performed.
+
+## Reviewer follow-up fixes
+
+- Restored the Chinese `### v0.14.0` heading at the same boundary as the
+  English history.
+- Removed both first-screen dshfind badges/links that pointed to `omdsh-dev`;
+  the compatibility notices now explicitly link the current
+  `XiaoyaoLinghao/DSH-better-sidebar` fork.
+- Made the prerequisites explicitly require DSH `0.1.0-rc.8` in both
+  languages.
+- Replaced the rollback placeholder path with separate copyable Bash and
+  PowerShell snippets that define an absolute tarball path variable before
+  invoking the official CLI.
+
+The behavioral README tests were unchanged because the documented source
+commands and their executable behavior did not change.

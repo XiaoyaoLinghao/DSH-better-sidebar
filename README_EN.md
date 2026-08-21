@@ -3,8 +3,7 @@
 <!-- Hero -->
 <div align="center">
   <b style="font-size: 1.15em;">DSH Better Workbench: a service-oriented sidebar and complete workbench</b><br /><br />
-  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://dshfind.com/en/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=en" /></a><br /><br />
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a><br /><br />
   <img alt="File management" src="https://img.shields.io/badge/-File%20management-4d6bfe" /> <img alt="Edit &amp; preview" src="https://img.shields.io/badge/-Edit%20%26%20preview-4d6bfe" /> <img alt="Embedded browser" src="https://img.shields.io/badge/-Embedded%20browser-4d6bfe" /> <img alt="Real terminal" src="https://img.shields.io/badge/-Real%20terminal-4d6bfe" /> <img alt="Git panel" src="https://img.shields.io/badge/-Git%20panel-4d6bfe" /> <img alt="Background tasks" src="https://img.shields.io/badge/-Background%20tasks-4d6bfe" /> <img alt="Sidechain /side /btw" src="https://img.shields.io/badge/-Sidechain%20%2Fside%20%2Fbtw-4d6bfe" /> <img alt="Plugin integration" src="https://img.shields.io/badge/-Plugin%20integration-4d6bfe" /><br /><br />
   <b>A dual workbench (right sidebar + bottom panel)</b> that opens its <code>ctx.betterSidebar</code> service to every plugin —<br />
   register new sidebar pages and file viewers via <code>registerTab</code> / <code>registerFileViewer</code>.
@@ -14,7 +13,7 @@
   🌏 <a href="./README.md">中文</a> · <a href="./README_EN.md"><b>English</b></a>
 </div>
 
-> ℹ️ The product is now named **DSH Better Workbench**; the npm package `dsh-better-sidebar`, plugin id, and `ctx.betterSidebar` service remain compatible.
+> ℹ️ The product is now named **DSH Better Workbench**; the current fork is [XiaoyaoLinghao/DSH-better-sidebar](https://github.com/XiaoyaoLinghao/DSH-better-sidebar). The npm package `dsh-better-sidebar`, plugin id, and `ctx.betterSidebar` service remain compatible.
 
 <div align="center">
   <video src="https://github.com/user-attachments/assets/23187822-047e-45cc-b480-fe997bd55b86" muted autoplay loop playsinline controls width="100%"></video>
@@ -160,7 +159,7 @@ The compatibility baseline is DSH `0.1.0-rc.8` (rc.7 and earlier are unsupported
 
 ## 🚀 Installation (source-first)
 
-**Prerequisites**: DSH installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10. Clone the current fork, then run the installer from the cloned repository:
+**Prerequisites**: DSH `0.1.0-rc.8` installed (`dsh web` boots), Node.js ≥ 20, pnpm ≥ 10. Clone the current fork, then run the installer from the cloned repository:
 
 ```sh
 git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
@@ -207,10 +206,16 @@ Use the official remove command to uninstall:
 dsh plugin --profile web remove dsh-better-sidebar
 ```
 
-After a source install, retain `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`. To roll back, run:
+After a source install, retain `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`. To roll back, define an absolute tarball path variable for the platform you are using:
 
-```sh
-dsh plugin --profile web add file:<clone-directory>/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz
+```bash
+ARTIFACT="$(pwd)/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz"
+dsh plugin --profile web add "file:${ARTIFACT}"
+```
+
+```powershell
+$artifact = Join-Path (Get-Location) '.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz'
+dsh plugin --profile web add "file:$artifact"
 ```
 
 If installation fails, stop; do not automatically switch to `dsh-better-sidebar@latest`.

@@ -3,8 +3,7 @@
 <!-- Hero -->
 <div align="center">
   <b style="font-size: 1.15em;">DSH Better Workbench：服务化侧边栏与完整工作台</b><br /><br />
-  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a>
-  <a href="https://dshfind.com/zh/plugins/omdsh-dev/DSH-better-sidebar?ref=badge"><img alt="dshfind" src="https://dshfind.com/api/badge/omdsh-dev/DSH-better-sidebar?lang=zh" /></a><br /><br />
+  <a href="https://opensource.org/licenses/MIT"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg" /></a><br /><br />
   <img alt="文件管理" src="https://img.shields.io/badge/-文件管理-4d6bfe" /> <img alt="编辑预览" src="https://img.shields.io/badge/-编辑预览-4d6bfe" /> <img alt="内嵌浏览器" src="https://img.shields.io/badge/-内嵌浏览器-4d6bfe" /> <img alt="真实终端" src="https://img.shields.io/badge/-真实终端-4d6bfe" /> <img alt="Git 面板" src="https://img.shields.io/badge/-Git%20面板-4d6bfe" /> <img alt="后台任务" src="https://img.shields.io/badge/-后台任务-4d6bfe" /> <img alt="Sidechain /side /btw" src="https://img.shields.io/badge/-Sidechain%20%2Fside%20%2Fbtw-4d6bfe" /> <img alt="插件接入" src="https://img.shields.io/badge/-插件接入-4d6bfe" /><br /><br />
   <b>右侧栏 + 底部面板双工作台</b>，并把 <code>ctx.betterSidebar</code> 服务开放给所有插件——<br />
   通过 <code>registerTab</code> / <code>registerFileViewer</code> 注册新的侧边栏页面与文件预览器。
@@ -14,7 +13,7 @@
   🌏 <a href="./README.md"><b>中文</b></a> · <a href="./README_EN.md">English</a>
 </div>
 
-> ℹ️ 产品名称已更名为 **DSH Better Workbench**；npm 包名 `dsh-better-sidebar`、插件 id 与 `ctx.betterSidebar` 服务保持兼容。
+> ℹ️ 产品名称已更名为 **DSH Better Workbench**；当前 fork 为 [XiaoyaoLinghao/DSH-better-sidebar](https://github.com/XiaoyaoLinghao/DSH-better-sidebar)。npm 包名 `dsh-better-sidebar`、插件 id 与 `ctx.betterSidebar` 服务保持兼容。
 
 <div align="center">
   <img alt="DSH Better Workbench 工作台截图" src="https://github.com/user-attachments/assets/dfdb875e-a1a8-4d4b-8340-353736b1708f" />
@@ -49,6 +48,7 @@
 
 这是 XiaoyaoLinghao 维护的 **DSH Better Workbench** fork：保留 `dsh-better-sidebar` 包名、插件 id 与 `ctx.betterSidebar` 服务兼容性，新增原生 Sidechain（`/side`、`/btw`、`/side list`）以及源码优先安装器。安装器要求 DSH `0.1.0-rc.8`，构建并通过官方 bundle 协调挂载；历史 upstream 实现与 BSD-3-Clause 归属仍保留在本仓库与 [`THIRD_PARTY_NOTICES`](./THIRD_PARTY_NOTICES) 中。
 
+### v0.14.0
 
 > ⚠️ **本版适配 DSH 0.1.0-rc.8**：全部 `@deepseek-ai/*` peer / devDependencies 升至 `^0.1.0-rc.8`（含传递依赖，lockfile 零 rc.7 残留），`cordis` 同步 `^4.0.0-rc.8`，CI 挂载冒烟钉版 `@deepseek-ai/dsh@0.1.0-rc.8`。**rc.7 及更早的 DSH 环境将无法解析本版依赖，请先升级 DSH**。自 v0.13.1 以来的全部更改：
 
@@ -128,7 +128,7 @@ Sidechain 只展示当前父会话的直接子会话并支持 `/side` 的内联�
 
 ## 🚀 安装（源码优先）
 
-**前置**：已装好 DSH（`dsh web` 能正常运行），Node.js ≥ 20、pnpm ≥ 10。先克隆当前 fork，并从克隆目录执行安装器：
+**前置**：已安装 DSH `0.1.0-rc.8`（`dsh web` 能正常运行），Node.js ≥ 20、pnpm ≥ 10。先克隆当前 fork，并从克隆目录执行安装器：
 
 ```sh
 git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
@@ -175,10 +175,16 @@ PowerShell 用户在 `git pull` 后重新运行上面的 PowerShell 源码命令
 dsh plugin --profile web remove dsh-better-sidebar
 ```
 
-源码安装成功后保留 `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`，需要回滚时可重新执行：
+源码安装成功后保留 `.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz`。需要回滚时，在克隆目录分别使用对应平台的绝对 tarball 路径变量：
 
-```sh
-dsh plugin --profile web add file:<克隆目录>/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz
+```bash
+ARTIFACT="$(pwd)/.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz"
+dsh plugin --profile web add "file:${ARTIFACT}"
+```
+
+```powershell
+$artifact = Join-Path (Get-Location) '.artifacts/dsh-better-sidebar-0.15.0-xlh.1.tgz'
+dsh plugin --profile web add "file:$artifact"
 ```
 
 安装失败必须停止；不要自动切换到 `dsh-better-sidebar@latest`。
