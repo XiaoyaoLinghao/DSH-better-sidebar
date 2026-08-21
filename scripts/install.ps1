@@ -44,6 +44,7 @@
 # =============================================================================
 param(
   [string]$Version = '',
+  [switch]$Source,
   [switch]$Restart,
   [switch]$DryRun,
   [switch]$Repair,
@@ -68,6 +69,9 @@ $PATCH_YML = Join-Path $PROFILE_DIR 'cordis.patch.yml'
 function Say([string]$m)  { Write-Host "[install] $m" -ForegroundColor Green }
 function Warn([string]$m) { Write-Host "[warn] $m" -ForegroundColor Yellow }
 function Die([string]$m)  { Write-Host "[error] $m" -ForegroundColor Red; exit 1 }
+
+if ($Source -and $Repair) { Die '-Source 不能与 -Repair 同时使用。' }
+if ($Source -and -not [string]::IsNullOrWhiteSpace($Version)) { Die '-Source 不能与 -Version 同时使用。' }
 
 # 解析版本 -> npm spec（"x.y.z" / "^x.y.z" / latest）
 function Resolve-Spec {
@@ -97,24 +101,57 @@ function Get-DshCli {
 }
 
 # 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
-# node-pty/protobufjs 构建脚本、放行本插件新版本
+# node-pty/protobufjs/@deepseek-ai/dsh-subprocess-local/koffi 构建脚本、放行本插件新版本
 function Ensure-WorkspaceSettings {
   $wsScript = @'
 const fs = require("fs");
 const p = process.argv[2];
 let t = fs.readFileSync(p, "utf8");
 const before = t;
-t = t.replace(/^(\s*)(node-pty|protobufjs):.*$/gm, "$1$2: true");
+const allowBuildEntries = ["node-pty", "protobufjs", "@deepseek-ai/dsh-subprocess-local", "koffi"];
+const quote = String.fromCharCode(39);
+const yamlKey = (name) => name.startsWith("@") ? quote + name + quote : name;
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const keyPattern = (name) => {
+  const escaped = escapeRegex(name);
+  return new RegExp("^([ \\t]*)(?:" + escaped + "|" + quote + escaped + quote + "|\\\"" + escaped + "\\\"):\\s*.*$", "m");
+};
 if (!/^\s*allowBuilds:\s*$/m.test(t)) {
-  t += "\nallowBuilds:\n  node-pty: true\n  protobufjs: true\n";
+  t += "\nallowBuilds:\n" + allowBuildEntries.map((name) => "  " + yamlKey(name) + ": true").join("\n") + "\n";
 } else {
-  for (const k of ["node-pty", "protobufjs"]) {
-    if (!new RegExp("^\\s*" + k + ":\\s*true\\s*$", "m").test(t)) {
-      t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n  " + k + ": true");
+  const missing = [];
+  for (const name of allowBuildEntries) {
+    const pattern = keyPattern(name);
+    if (pattern.test(t)) {
+      t = t.replace(pattern, "$1" + yamlKey(name) + ": true");
+    } else {
+      missing.push("  " + yamlKey(name) + ": true");
     }
   }
+  if (missing.length) t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n" + missing.join("\n"));
 }
-if (!/^\s*-\s+dsh-better-sidebar\s*$/m.test(t)) {
+const hasDeepseekApproval = t.split(/\r?\n/).some((line) => {
+  const value = line.trim();
+  const q = String.fromCharCode(39);
+  return value === "- @deepseek-ai/*"
+    || value === "- " + q + "@deepseek-ai/*" + q
+    || value === '- "@deepseek-ai/*"';
+});
+if (!hasDeepseekApproval) {
+  if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
+    t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - " + String.fromCharCode(39) + "@deepseek-ai/*" + String.fromCharCode(39));
+  } else {
+    t += "\nminimumReleaseAgeExclude:\n  - " + String.fromCharCode(39) + "@deepseek-ai/*" + String.fromCharCode(39) + "\n";
+  }
+}
+const hasPackageApproval = t.split(/\r?\n/).some((line) => {
+  const value = line.trim();
+  const q = String.fromCharCode(39);
+  return value === "- dsh-better-sidebar"
+    || value === "- " + q + "dsh-better-sidebar" + q
+    || value === '- "dsh-better-sidebar"';
+});
+if (!hasPackageApproval) {
   if (/^\s*minimumReleaseAgeExclude:\s*$/m.test(t)) {
     t = t.replace(/^(\s*minimumReleaseAgeExclude:\s*)$/m, "$1\n  - dsh-better-sidebar");
   } else {
@@ -129,7 +166,7 @@ console.log(t === before ? "unchanged" : "updated");
   # 改用临时文件方式，兼容 PS 5.1 与 pwsh 7。
   $wsJs = Join-Path $env:TEMP ("dshbs-ws-" + [guid]::NewGuid().ToString("N") + ".js")
   Set-Content -LiteralPath $wsJs -Value $wsScript -Encoding UTF8
-  $wsOut = node $wsJs "$WS_YML" 2>&1
+  $wsOut = & node @($wsJs, $WS_YML) 2>&1
   $wsCode = $LASTEXITCODE
   Remove-Item -LiteralPath $wsJs -Force -ErrorAction SilentlyContinue
   $wsResult = (($wsOut | Out-String)).Trim()
@@ -176,33 +213,102 @@ if ($Repair) {
   exit 0
 }
 
-$SPEC = Resolve-Spec $Version
-$CLI = Get-DshCli
-if (-not $CLI) {
-  Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
-}
-Say "目标：$CLI plugin --profile $Profile add $PKG@$SPEC（profile: $PROFILE_DIR）"
+$INSTALL_SPEC = ''
+$SOURCE_VERSION = ''
+if ($Source) {
+  $ROOT = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+  $ARTIFACT_DIR = Join-Path $ROOT '.artifacts'
+  try {
+    $sourcePackage = Get-Content -Raw -LiteralPath (Join-Path $ROOT 'package.json') -ErrorAction Stop | ConvertFrom-Json
+    $sourceManifest = Get-Content -Raw -LiteralPath (Join-Path $ROOT 'dsh.plugin.json') -ErrorAction Stop | ConvertFrom-Json
+  } catch {
+    Die "源码 manifest 校验失败：$($_.Exception.Message)"
+  }
+  if ($sourcePackage.name -ne 'dsh-better-sidebar') { Die "源码包名异常：$($sourcePackage.name)" }
+  if ($sourcePackage.version -ne $sourceManifest.version) { Die '源码 manifest 版本不一致。' }
+  $SOURCE_VERSION = [string]$sourcePackage.version
+  $TARBALL = Join-Path $ARTIFACT_DIR "dsh-better-sidebar-$SOURCE_VERSION.tgz"
 
-if ($DryRun) {
-  Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（$PKG）"
-  Say "[dry-run] 步骤 2：执行 $CLI plugin --profile $Profile add $PKG@$SPEC（安装 + bundle 自动注册）"
-  Say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
-  Say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
-  if ($Restart) { Say '[dry-run] 步骤 5：pm2 restart dsh-web' } else { Say '[dry-run] 步骤 5：提示用户手动重启 DSH' }
-  exit 0
-}
+  Set-Location -LiteralPath $ROOT
+  $CLI = Get-DshCli
+  if (-not $CLI) {
+    Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
+  }
+  Say "目标：$CLI plugin --profile $Profile add file:$TARBALL（源码构建，profile: $PROFILE_DIR）"
 
-# 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、放行本插件新版本
-Ensure-WorkspaceSettings
+  if ($DryRun) {
+    Say "[dry-run] 源码根目录：$ROOT"
+    Say "[dry-run] 源码版本：$SOURCE_VERSION"
+    Say "[dry-run] 产物路径：$TARBALL"
+    Say '[dry-run] 步骤 1：验证 DSH 版本（要求 0.1.0-rc.8）'
+    Say '[dry-run] 步骤 2：执行 pnpm install --frozen-lockfile'
+    Say '[dry-run] 步骤 3：执行 pnpm build'
+    Say "[dry-run] 步骤 4：执行 pnpm pack --pack-destination $ARTIFACT_DIR"
+    Say "[dry-run] 步骤 5：$CLI plugin --profile $Profile add file:$TARBALL"
+    exit 0
+  }
+
+  if ($CLI -eq 'dsh') {
+    $versionOutput = & dsh --version 2>&1
+  } else {
+    $versionProbeArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', '--version')
+    $versionOutput = & npx @versionProbeArgs 2>&1
+  }
+  $versionCode = $LASTEXITCODE
+  $versionText = (($versionOutput | Out-String)).Trim()
+  $versionLines = $versionText -split '\r?\n'
+  $observedVersion = if ($versionLines.Count -gt 0) { ([string]$versionLines[$versionLines.Count - 1]).Trim() } else { '' }
+  if ($versionCode -ne 0 -or $observedVersion -ne '0.1.0-rc.8') {
+    Die "源码版要求 DSH 0.1.0-rc.8，当前为 $observedVersion。"
+  }
+
+  # 源码构建必须先获得 DSH 版本确认，再写入 profile 配置。
+  Ensure-WorkspaceSettings
+  & pnpm @('install', '--frozen-lockfile')
+  $pnpmCode = $LASTEXITCODE
+  if ($pnpmCode -ne 0) { Die "pnpm install 失败（退出码 $pnpmCode）。" }
+  & pnpm @('build')
+  $pnpmCode = $LASTEXITCODE
+  if ($pnpmCode -ne 0) { Die "pnpm build 失败（退出码 $pnpmCode）。" }
+  New-Item -ItemType Directory -Force -Path $ARTIFACT_DIR | Out-Null
+  & pnpm @('pack', '--pack-destination', $ARTIFACT_DIR)
+  $pnpmCode = $LASTEXITCODE
+  if ($pnpmCode -ne 0) { Die "pnpm pack 失败（退出码 $pnpmCode）。" }
+  if (-not (Test-Path -LiteralPath $TARBALL -PathType Leaf)) {
+    Die "pnpm pack 未生成预期 tarball：$TARBALL"
+  }
+  $INSTALL_SPEC = "file:$TARBALL"
+} else {
+  $SPEC = Resolve-Spec $Version
+  $CLI = Get-DshCli
+  if (-not $CLI) {
+    Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
+  }
+  $INSTALL_SPEC = "$PKG@$SPEC"
+  Say "目标：$CLI plugin --profile $Profile add $INSTALL_SPEC（profile: $PROFILE_DIR）"
+
+  if ($DryRun) {
+    Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（$PKG）"
+    Say "[dry-run] 步骤 2：执行 $CLI plugin --profile $Profile add $INSTALL_SPEC（安装 + bundle 自动注册）"
+    Say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
+    Say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
+    if ($Restart) { Say '[dry-run] 步骤 5：pm2 restart dsh-web' } else { Say '[dry-run] 步骤 5：提示用户手动重启 DSH' }
+    exit 0
+  }
+
+  # 步骤 1：预写 workspace 设置（幂等），保证 pnpm 不拦截构建、放行本插件新版本
+  Ensure-WorkspaceSettings
+}
 
 # 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）
 if ($CLI -eq 'dsh') {
-  $cliArgs = @('plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
+  $cliArgs = @('plugin', '--profile', $Profile, 'add', $INSTALL_SPEC)
+  $addOut = & dsh @cliArgs 2>&1
 } else {
-  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', $Profile, 'add', "$PKG@$SPEC")
+  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', $Profile, 'add', $INSTALL_SPEC)
+  $addOut = & npx @cliArgs 2>&1
 }
-Say "执行 $CLI plugin --profile $Profile add $PKG@$SPEC ..."
-$addOut = & $CLI @cliArgs 2>&1
+Say "执行 $CLI plugin --profile $Profile add $INSTALL_SPEC ..."
 $addCode = $LASTEXITCODE
 $addOut | ForEach-Object { $_ }
 if ($addCode -ne 0) {
@@ -221,6 +327,19 @@ if ($bundles -notcontains $PKG) {
   exit 1
 }
 Say "bundle 已注册：dsh.profile.bundles 包含 $PKG（下次启动自动挂载）"
+
+if ($Source) {
+  $installedManifestPath = Join-Path $PROFILE_DIR "node_modules\$PKG\package.json"
+  try {
+    $installedPackage = Get-Content -Raw -LiteralPath $installedManifestPath -ErrorAction Stop | ConvertFrom-Json
+  } catch {
+    Die "源码安装版本校验失败：无法读取 $installedManifestPath。"
+  }
+  if ($installedPackage.name -ne $PKG -or [string]$installedPackage.version -ne $SOURCE_VERSION) {
+    Die "源码安装版本校验失败：profile 中的 $PKG 不是 $SOURCE_VERSION。"
+  }
+  Say "源码版本已校验：$PKG@$SOURCE_VERSION"
+}
 
 # 步骤 4：幂等移除旧的 manual 挂载行（避免与 bundle 双挂载）
 $mountScript = @'
@@ -259,7 +378,7 @@ if (!removed) {
 '@
 $mountJs = Join-Path $env:TEMP ("dshbs-mount-" + [guid]::NewGuid().ToString("N") + ".js")
 Set-Content -LiteralPath $mountJs -Value $mountScript -Encoding UTF8
-$mountOut = node $mountJs "$PATCH_YML" 2>&1
+$mountOut = & node @($mountJs, $PATCH_YML) 2>&1
 $mountCode = $LASTEXITCODE
 Remove-Item -LiteralPath $mountJs -Force -ErrorAction SilentlyContinue
 $mountResult = (($mountOut | Out-String)).Trim()
@@ -270,7 +389,7 @@ if ($mountResult -eq 'removed') {
   Say '无旧手动挂载行，跳过'
 }
 
-Say "安装完成：$PKG@$SPEC"
+Say "安装完成：$INSTALL_SPEC"
 
 # 步骤 5：重启提示
 if ($Restart) {
