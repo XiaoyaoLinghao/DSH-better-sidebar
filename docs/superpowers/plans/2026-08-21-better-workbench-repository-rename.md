@@ -296,7 +296,7 @@ Critical/Important findings before Task 3.
 - Consumes: Tasks 1–2 reviewed tree.
 - Produces: a fixed reviewed commit that is safe to expose under the new GitHub slug.
 
-- [ ] **Step 1: Run focused release gates**
+- [x] **Step 1: Run focused release gates**
 
 Run:
 
@@ -313,7 +313,7 @@ Expected: build/typecheck/consumer checks pass; focused tests pass; package
 inventory contains both READMEs/installers/`THIRD_PARTY_NOTICES`, excludes
 `.artifacts/`, and reports package `dsh-better-sidebar@0.15.0-xlh.1`.
 
-- [ ] **Step 2: Run the complete unit suite and classify failures honestly**
+- [x] **Step 2: Run the complete unit suite and classify failures honestly**
 
 Run:
 
@@ -325,7 +325,7 @@ Expected: no rename/README/installer test failure. On Windows, report the full
 suite as non-green if the already reproduced PTY repair-command, CRLF, Git
 identity, or ConPTY failures recur; do not weaken them or call non-zero green.
 
-- [ ] **Step 3: Run the real pinned rc.8 mount**
+- [x] **Step 3: Run the real pinned rc.8 mount**
 
 Run:
 
@@ -344,7 +344,7 @@ installer behavior, package inventory, base-failure classification, mount
 evidence, and the external rename transaction below. Fix all
 Critical/Important findings with Luna and obtain scoped Sol approval.
 
-- [ ] **Step 5: Commit acceptance records**
+- [x] **Step 5: Commit acceptance records**
 
 ```bash
 git add docs/superpowers/plans/2026-08-21-better-workbench-repository-rename.md
