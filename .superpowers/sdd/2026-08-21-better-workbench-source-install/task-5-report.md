@@ -155,3 +155,23 @@ from `tests/agent-pty.spec.ts`, which is the known ConPTY/environment category.
 The prior clean-base comparison recorded the same four assertion failures plus
 ConPTY worker errors. No assertions were weakened and no mount threshold was
 changed.
+
+## Final fresh rc.8 mount from `1598eae`
+
+With no other heavy test running, the complete real pinned rc.8 lane passed
+**7/7** in **45.6s**:
+
+1. width drag tracks the shell 1:1 — **6.2s**
+2. fast width drag commits the dragged position — **3.4s**
+3. interrupted fast drag keeps the dragged width — **3.4s**
+4. capture-lost drag keeps the last applied width — **3.4s**
+5. deep center-column replacement relocates the bottom panel — **2.8s**
+6. plugin mount survives the built-in tab sweep — **22.9s**
+7. desktop title-bar compatibility mode — **1.1s**
+
+The run used DSH `0.1.0-rc.8`, exited 0, and preserved its non-destructive
+quarantine at:
+
+`C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-c56ac6f87570eae6-bdd97e8c43ef2856`
+
+No production or test threshold changes were made for this run.

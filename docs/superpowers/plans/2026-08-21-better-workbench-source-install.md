@@ -620,7 +620,7 @@ Expected before final guard adjustments: FAIL if the inventory or four-package
 source contract is not yet represented exactly; change only the assertions
 made stale by the approved design, not unrelated safety guarantees.
 
-- [ ] **Step 3: Run all focused feature tests**
+- [x] **Step 3: Run all focused feature tests**
 
 Run:
 
@@ -636,7 +636,7 @@ git diff --check
 Expected: all commands exit 0. The pack manifest includes both installers and
 READMEs and excludes `.artifacts/`.
 
-- [ ] **Step 4: Run the full unit suite and classify only reproduced base failures**
+- [x] **Step 4: Run the full unit suite and classify only reproduced base failures**
 
 Run:
 
@@ -649,7 +649,7 @@ command, CRLF discard, or missing Git author/committer cases, run those exact
 test files/cases at base commit `36c60ea` in a separate clean worktree and
 record equality. Do not call a non-zero suite green and do not weaken tests.
 
-- [ ] **Step 5: Run the isolated real rc.8 source-package mount**
+- [x] **Step 5: Run the isolated real rc.8 source-package mount**
 
 Run the existing non-destructive mount lane from the feature worktree:
 
@@ -662,7 +662,7 @@ including plugin discovery, persisted settings, Sidechain commands/view, and
 layout ownership. Preserve the runner's quarantine output for manual/OS
 reclamation; do not delete it recursively.
 
-- [ ] **Step 6: Commit Task 5 acceptance guards**
+- [x] **Step 6: Commit Task 5 acceptance guards**
 
 ```bash
 git add tests/sidechain-provenance.spec.ts tests/script-safety.spec.ts docs/superpowers/plans/2026-08-21-better-workbench-source-install.md
