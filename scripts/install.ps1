@@ -16,6 +16,8 @@
 #   & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/omdsh-dev/DSH-better-sidebar/main/scripts/install.ps1'))) -Version 0.10.2 -Restart
 #   # 本地保存后运行
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Version 0.10.2 -DryRun
+#   # 从源码构建并安装到 profile
+#   powershell -ExecutionPolicy Bypass -File install.ps1 -Source -Profile web
 #   # 修复 node-pty 依赖（终端提示「node-pty 加载失败」时用，见 issue #140）
 #   powershell -ExecutionPolicy Bypass -File install.ps1 -Repair
 #
@@ -24,6 +26,7 @@
 #   -Repair     修复模式：不重装插件，只确保 profile 的 pnpm-workspace.yaml
 #               放行 node-pty 构建脚本，然后重跑 pnpm install + pnpm rebuild
 #               node-pty。
+#   -Source     从当前脚本所在源码 checkout 构建 tarball 并安装。
 #   -Profile    目标 profile 名（缺省 web）；安装与修复模式均适用。
 #   -Restart    装完后尝试 `pm2 restart dsh-web`（无 pm2 时仅提示）。会断开当前页面会话。
 #   -DryRun     只打印将要执行的操作，不写任何文件。
@@ -34,8 +37,8 @@
 #   DSH_CMD     默认优先 PATH 上的 dsh，缺省回退 npx -y --package @deepseek-ai/dsh
 #
 # 说明：
-# - pnpm 11 的 strict-dep-builds 会拦截 node-pty/protobufjs 的构建脚本并使
-#   `dsh plugin add` 非零退出。脚本会先把这两个构建许可写进 profile 的
+# - pnpm 11 的 strict-dep-builds 会拦截四个 native 依赖的构建脚本并使
+#   `dsh plugin add` 非零退出。脚本会先把四个 native 构建许可写进 profile 的
 #   pnpm-workspace.yaml（幂等），保证 CLI 一步成功。
 # - pnpm 11 的 minimumReleaseAge 会拒绝发布 <24h 的新版本。脚本会预写
 #   minimumReleaseAgeExclude（幂等），放行本插件，避免"重跑一次才成功"。
@@ -94,10 +97,53 @@ function Resolve-Spec {
 
 # 组装 dsh CLI：优先 PATH 上的 dsh，缺省 npx 拉官方包
 function Get-DshCli {
-  if ($env:DSH_CMD) { return $env:DSH_CMD }
-  if (Get-Command dsh -ErrorAction SilentlyContinue) { return 'dsh' }
-  if (Get-Command npx -ErrorAction SilentlyContinue) { return 'npx' }
+  if ($env:DSH_CMD) {
+    return [pscustomobject]@{
+      Executable = [string]$env:DSH_CMD
+      Prefix = @()
+    }
+  }
+  if (Get-Command dsh -ErrorAction SilentlyContinue) {
+    return [pscustomobject]@{
+      Executable = 'dsh'
+      Prefix = @()
+    }
+  }
+  if (Get-Command npx -ErrorAction SilentlyContinue) {
+    return [pscustomobject]@{
+      Executable = 'npx'
+      Prefix = @('-y', '--package', '@deepseek-ai/dsh', 'dsh')
+    }
+  }
   return $null
+}
+
+function Invoke-Native {
+  param(
+    [string]$Executable,
+    [string[]]$Arguments
+  )
+  try {
+    $nativeOutput = @(& $Executable @Arguments 2>&1)
+    $nativeSucceeded = $?
+    $nativeExitCode = $LASTEXITCODE
+    return [pscustomobject]@{
+      Output = $nativeOutput
+      Succeeded = $nativeSucceeded
+      ExitCode = $nativeExitCode
+    }
+  } catch {
+    return [pscustomobject]@{
+      Output = @($_.Exception.Message)
+      Succeeded = $false
+      ExitCode = $null
+    }
+  }
+}
+
+function Test-NativeSuccess {
+  param([object]$Result)
+  return $Result.Succeeded -eq $true -and $Result.ExitCode -is [int] -and $Result.ExitCode -eq 0
 }
 
 # 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
@@ -172,7 +218,7 @@ console.log(t === before ? "unchanged" : "updated");
   $wsResult = (($wsOut | Out-String)).Trim()
   if ($wsCode -ne 0) { Die "处理 $WS_YML 失败（node 退出码 $wsCode）：$wsResult" }
   if ($wsResult -eq 'updated') {
-    Say "已确保 $WS_YML：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（$PKG）"
+    Say "已确保 $WS_YML：allowBuilds（四个 native 依赖: true）+ minimumReleaseAgeExclude（$PKG）"
   } else {
     Say 'workspace 设置已就绪，跳过'
   }
@@ -194,7 +240,7 @@ if (-not (Test-Path $WS_YML)) {
 # pnpm install + pnpm rebuild node-pty（重放被 pnpm 11 拦截的构建脚本）。
 if ($Repair) {
   if ($DryRun) {
-    Say "[dry-run] 修复：确保 $WS_YML 含 allowBuilds（node-pty: true）"
+    Say "[dry-run] 修复：确保 $WS_YML 含 allowBuilds（四个 native 依赖: true）"
     Say "[dry-run] 修复：cd $PROFILE_DIR; pnpm install; pnpm rebuild node-pty"
     exit 0
   }
@@ -224,17 +270,30 @@ if ($Source) {
   } catch {
     Die "源码 manifest 校验失败：$($_.Exception.Message)"
   }
-  if ($sourcePackage.name -ne 'dsh-better-sidebar') { Die "源码包名异常：$($sourcePackage.name)" }
-  if ($sourcePackage.version -ne $sourceManifest.version) { Die '源码 manifest 版本不一致。' }
-  $SOURCE_VERSION = [string]$sourcePackage.version
+  $sourceName = $sourcePackage.name
+  $sourceVersionValue = $sourcePackage.version
+  $manifestVersionValue = $sourceManifest.version
+  if (($sourceName -isnot [string]) -or [string]::IsNullOrEmpty([string]$sourceName) -or -not [string]::Equals([string]$sourceName, 'dsh-better-sidebar', [StringComparison]::Ordinal)) {
+    Die "源码包名异常：$sourceName"
+  }
+  if (($sourceVersionValue -isnot [string]) -or [string]::IsNullOrEmpty([string]$sourceVersionValue) -or ($manifestVersionValue -isnot [string]) -or [string]::IsNullOrEmpty([string]$manifestVersionValue)) {
+    Die '源码 manifest 版本必须是非空字符串。'
+  }
+  if (-not [string]::Equals([string]$sourceVersionValue, [string]$manifestVersionValue, [StringComparison]::Ordinal)) {
+    Die '源码 manifest 版本不一致。'
+  }
+  $SOURCE_VERSION = [string]$sourceVersionValue
   $TARBALL = Join-Path $ARTIFACT_DIR "dsh-better-sidebar-$SOURCE_VERSION.tgz"
 
   Set-Location -LiteralPath $ROOT
-  $CLI = Get-DshCli
-  if (-not $CLI) {
+  $CLI_INFO = Get-DshCli
+  if (-not $CLI_INFO) {
     Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
   }
-  Say "目标：$CLI plugin --profile $Profile add file:$TARBALL（源码构建，profile: $PROFILE_DIR）"
+  $CLI = [string]$CLI_INFO.Executable
+  $CLI_PREFIX = @($CLI_INFO.Prefix)
+  $CLI_LABEL = if ($CLI_PREFIX.Count -gt 0) { "$CLI $($CLI_PREFIX -join ' ')" } else { $CLI }
+  Say "目标：$CLI_LABEL plugin --profile $Profile add file:$TARBALL（源码构建，profile: $PROFILE_DIR）"
 
   if ($DryRun) {
     Say "[dry-run] 源码根目录：$ROOT"
@@ -244,52 +303,47 @@ if ($Source) {
     Say '[dry-run] 步骤 2：执行 pnpm install --frozen-lockfile'
     Say '[dry-run] 步骤 3：执行 pnpm build'
     Say "[dry-run] 步骤 4：执行 pnpm pack --pack-destination $ARTIFACT_DIR"
-    Say "[dry-run] 步骤 5：$CLI plugin --profile $Profile add file:$TARBALL"
+    Say "[dry-run] 步骤 5：$CLI_LABEL plugin --profile $Profile add file:$TARBALL"
     exit 0
   }
 
-  if ($CLI -eq 'dsh') {
-    $versionOutput = & dsh --version 2>&1
-  } else {
-    $versionProbeArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', '--version')
-    $versionOutput = & npx @versionProbeArgs 2>&1
-  }
-  $versionCode = $LASTEXITCODE
-  $versionText = (($versionOutput | Out-String)).Trim()
+  $versionProbeArgs = @($CLI_PREFIX) + @('--version')
+  $versionResult = Invoke-Native -Executable $CLI -Arguments $versionProbeArgs
+  $versionText = (($versionResult.Output | Out-String)).Trim()
   $versionLines = $versionText -split '\r?\n'
   $observedVersion = if ($versionLines.Count -gt 0) { ([string]$versionLines[$versionLines.Count - 1]).Trim() } else { '' }
-  if ($versionCode -ne 0 -or $observedVersion -ne '0.1.0-rc.8') {
+  if (-not (Test-NativeSuccess $versionResult) -or $observedVersion -ne '0.1.0-rc.8') {
     Die "源码版要求 DSH 0.1.0-rc.8，当前为 $observedVersion。"
   }
 
   # 源码构建必须先获得 DSH 版本确认，再写入 profile 配置。
   Ensure-WorkspaceSettings
-  & pnpm @('install', '--frozen-lockfile')
-  $pnpmCode = $LASTEXITCODE
-  if ($pnpmCode -ne 0) { Die "pnpm install 失败（退出码 $pnpmCode）。" }
-  & pnpm @('build')
-  $pnpmCode = $LASTEXITCODE
-  if ($pnpmCode -ne 0) { Die "pnpm build 失败（退出码 $pnpmCode）。" }
+  $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('install', '--frozen-lockfile')
+  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm install 失败（退出码 $($pnpmResult.ExitCode)）。" }
+  $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('build')
+  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm build 失败（退出码 $($pnpmResult.ExitCode)）。" }
   New-Item -ItemType Directory -Force -Path $ARTIFACT_DIR | Out-Null
-  & pnpm @('pack', '--pack-destination', $ARTIFACT_DIR)
-  $pnpmCode = $LASTEXITCODE
-  if ($pnpmCode -ne 0) { Die "pnpm pack 失败（退出码 $pnpmCode）。" }
+  $pnpmResult = Invoke-Native -Executable 'pnpm' -Arguments @('pack', '--pack-destination', $ARTIFACT_DIR)
+  if (-not (Test-NativeSuccess $pnpmResult)) { Die "pnpm pack 失败（退出码 $($pnpmResult.ExitCode)）。" }
   if (-not (Test-Path -LiteralPath $TARBALL -PathType Leaf)) {
     Die "pnpm pack 未生成预期 tarball：$TARBALL"
   }
   $INSTALL_SPEC = "file:$TARBALL"
 } else {
   $SPEC = Resolve-Spec $Version
-  $CLI = Get-DshCli
-  if (-not $CLI) {
+  $CLI_INFO = Get-DshCli
+  if (-not $CLI_INFO) {
     Die '未找到 dsh 或 npx。请先安装 DSH（并确保 Node/npm 可用），或用 DSH_CMD 指定。'
   }
+  $CLI = [string]$CLI_INFO.Executable
+  $CLI_PREFIX = @($CLI_INFO.Prefix)
+  $CLI_LABEL = if ($CLI_PREFIX.Count -gt 0) { "$CLI $($CLI_PREFIX -join ' ')" } else { $CLI }
   $INSTALL_SPEC = "$PKG@$SPEC"
-  Say "目标：$CLI plugin --profile $Profile add $INSTALL_SPEC（profile: $PROFILE_DIR）"
+  Say "目标：$CLI_LABEL plugin --profile $Profile add $INSTALL_SPEC（profile: $PROFILE_DIR）"
 
   if ($DryRun) {
-    Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（node-pty/protobufjs: true）与 minimumReleaseAgeExclude（$PKG）"
-    Say "[dry-run] 步骤 2：执行 $CLI plugin --profile $Profile add $INSTALL_SPEC（安装 + bundle 自动注册）"
+    Say "[dry-run] 步骤 1：确保 $WS_YML 含 allowBuilds（四个 native 依赖: true）与 minimumReleaseAgeExclude（$PKG）"
+    Say "[dry-run] 步骤 2：执行 $CLI_LABEL plugin --profile $Profile add $INSTALL_SPEC（安装 + bundle 自动注册）"
     Say "[dry-run] 步骤 3：校验 dsh.profile.bundles 含 $PKG"
     Say "[dry-run] 步骤 4：幂等移除 $PATCH_YML 里旧的 better-sidebar 手动挂载行（避免双挂载）"
     if ($Restart) { Say '[dry-run] 步骤 5：pm2 restart dsh-web' } else { Say '[dry-run] 步骤 5：提示用户手动重启 DSH' }
@@ -301,22 +355,17 @@ if ($Source) {
 }
 
 # 步骤 2：官方 CLI 安装 + bundle 自动注册（含挂载）
-if ($CLI -eq 'dsh') {
-  $cliArgs = @('plugin', '--profile', $Profile, 'add', $INSTALL_SPEC)
-  $addOut = & dsh @cliArgs 2>&1
-} else {
-  $cliArgs = @('-y', '--package', '@deepseek-ai/dsh', 'dsh', 'plugin', '--profile', $Profile, 'add', $INSTALL_SPEC)
-  $addOut = & npx @cliArgs 2>&1
-}
-Say "执行 $CLI plugin --profile $Profile add $INSTALL_SPEC ..."
-$addCode = $LASTEXITCODE
-$addOut | ForEach-Object { $_ }
-if ($addCode -ne 0) {
+$cliArgs = @($CLI_PREFIX) + @('plugin', '--profile', $Profile, 'add', $INSTALL_SPEC)
+Say "执行 $CLI_LABEL plugin --profile $Profile add $INSTALL_SPEC ..."
+$addResult = Invoke-Native -Executable $CLI -Arguments $cliArgs
+$addOut = $addResult.Output
+if (-not (Test-NativeSuccess $addResult)) {
   Warn 'dsh plugin add 失败。已预写 allowBuilds 与 minimumReleaseAgeExclude，仍失败的可能原因：'
   Warn '  - 网络/登录问题：npm registry 不可达或需要登录。'
   Warn "  - 依赖安装冲突：可手动重试 cd $PROFILE_DIR; pnpm install。"
   exit 1
 }
+$addOut | ForEach-Object { $_ }
 
 # 步骤 3：校验 bundle 已注册（挂载生效的判据）
 $pkgJson = Get-Content -Raw (Join-Path $PROFILE_DIR 'package.json') | ConvertFrom-Json

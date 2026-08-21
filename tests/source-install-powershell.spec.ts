@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
-import { dirname, join, resolve } from 'node:path'
+import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createSourceInstallFixture, readSourceCalls, type SourceCall, type SourceInstallFixture } from './helpers/source-install-fixture.ts'
@@ -72,6 +72,73 @@ function workspaceText(fixture: SourceInstallFixture): string {
   return readFileSync(join(fixture.profileDir, 'pnpm-workspace.yaml'), 'utf8')
 }
 
+function fakeBinDir(fixture: SourceInstallFixture): string {
+  const pathValue = fixture.env.PATH || fixture.env.Path || ''
+  const bin = pathValue.split(delimiter)[0]
+  if (!bin) throw new Error('fixture fake bin directory is missing from PATH')
+  return bin
+}
+
+function removeFakeCommand(fixture: SourceInstallFixture, command: string): void {
+  const bin = fakeBinDir(fixture)
+  for (const suffix of ['', '.cmd']) {
+    const path = join(bin, command + suffix)
+    if (existsSync(path)) rmSync(path, { force: true })
+  }
+}
+
+function installNpxProxy(fixture: SourceInstallFixture): string {
+  const bin = fakeBinDir(fixture)
+  const delegate = join(fixture.sandbox, 'delegated-dsh.js')
+  copyFileSync(join(bin, 'dsh'), delegate)
+  removeFakeCommand(fixture, 'dsh')
+  const marker = join(fixture.sandbox, 'npx-used')
+  const npx = join(bin, 'npx')
+  writeFileSync(npx, `const fs = require('node:fs')
+const cp = require('node:child_process')
+fs.writeFileSync(${JSON.stringify(marker)}, 'used\\n')
+const result = cp.spawnSync(process.execPath, [${JSON.stringify(delegate)}, ...process.argv.slice(2).slice(4)], { stdio: 'inherit' })
+process.exit(result.status === null ? 1 : result.status)
+`, { mode: 0o755 })
+  writeFileSync(npx + '.cmd', '@echo off\r\nnode "%~dp0npx" %*\r\n')
+  return marker
+}
+
+function installFailingNpx(fixture: SourceInstallFixture): void {
+  const bin = fakeBinDir(fixture)
+  const npx = join(bin, 'npx')
+  writeFileSync(npx, 'process.stderr.write("unexpected npx invocation\\n")\nprocess.exit(91)\n', { mode: 0o755 })
+  writeFileSync(npx + '.cmd', '@echo off\r\nnode "%~dp0npx" %*\r\n')
+}
+
+function installOneShotDsh(fixture: SourceInstallFixture): void {
+  const bin = fakeBinDir(fixture)
+  const dsh = join(bin, 'dsh')
+  writeFileSync(dsh, `const fs = require('node:fs')
+const callsFile = process.env.SOURCE_INSTALL_CALLS_FILE
+const argv = process.argv.slice(2)
+fs.appendFileSync(callsFile, JSON.stringify({ tool: 'dsh', argv, cwd: process.cwd() }) + '\\n')
+if (argv.length === 1 && argv[0] === '--version') {
+  process.stdout.write('0.1.0-rc.8\\n')
+  try { fs.rmSync(__filename, { force: true }) } catch {}
+  try { fs.rmSync(__filename + '.cmd', { force: true }) } catch {}
+  process.exit(0)
+}
+process.stderr.write('one-shot dsh cannot launch plugin add\\n')
+process.exit(2)
+`, { mode: 0o755 })
+}
+
+function writeSourceManifests(fixture: SourceInstallFixture, mutate: (pkg: Record<string, unknown>, manifest: Record<string, unknown>) => void): void {
+  const packagePath = join(fixture.repo, 'package.json')
+  const manifestPath = join(fixture.repo, 'dsh.plugin.json')
+  const pkg = JSON.parse(readFileSync(packagePath, 'utf8')) as Record<string, unknown>
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>
+  mutate(pkg, manifest)
+  writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n')
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n')
+}
+
 describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
   const fixtures: SourceInstallFixture[] = []
 
@@ -124,6 +191,88 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
 
     const installedPackage = JSON.parse(readFileSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'), 'utf8')) as { version: string }
     expect(installedPackage.version).toBe(SOURCE_VERSION)
+  })
+
+  it('uses the PATH dsh executable for direct source probe and install', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+
+    const result = runSource(fixture)
+
+    expect(result.status).toBe(0)
+    expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
+      ['--version'],
+      ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
+    ])
+  })
+
+  it('uses the npx fallback executable with its fixed dsh prefix when dsh is absent', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    const marker = installNpxProxy(fixture)
+
+    const result = runSource(fixture)
+
+    expect(result.status).toBe(0)
+    expect(existsSync(marker)).toBe(true)
+    expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
+      ['--version'],
+      ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
+    ])
+  })
+
+  it('uses a custom DSH_CMD executable for both source probe and install', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    fixture.env.DSH_CMD = join(fakeBinDir(fixture), 'dsh.cmd')
+    installFailingNpx(fixture)
+
+    const result = runSource(fixture)
+
+    expect(result.status).toBe(0)
+    expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
+      ['--version'],
+      ['plugin', '--profile', 'web', 'add', `file:${join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)}`],
+    ])
+  })
+
+  it('fails closed when pnpm cannot launch even if an old tarball exists', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    const tarball = join(fixture.repo, '.artifacts', `dsh-better-sidebar-${SOURCE_VERSION}.tgz`)
+    mkdirSync(join(fixture.repo, '.artifacts'), { recursive: true })
+    writeFileSync(tarball, 'stale artifact\n')
+    removeFakeCommand(fixture, 'pnpm')
+    fixture.env.PATH = [fakeBinDir(fixture), dirname(process.execPath)].join(delimiter)
+    fixture.env.Path = fixture.env.PATH
+
+    const result = runSource(fixture)
+
+    expect(result.status).not.toBe(0)
+    expect(readFileSync(tarball, 'utf8')).toBe('stale artifact\n')
+    expect(readSourceCalls(fixture.callsFile).some(call => call.tool === 'dsh' && call.argv[0] === 'plugin')).toBe(false)
+    expect(existsSync(join(fixture.profileDir, 'node_modules', PACKAGE_NAME, 'package.json'))).toBe(false)
+  })
+
+  it('fails closed when dsh plugin add cannot launch after a successful probe', () => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    const profilePackagePath = join(fixture.profileDir, 'package.json')
+    const profilePackage = JSON.parse(readFileSync(profilePackagePath, 'utf8')) as { dsh?: { profile?: { bundles?: string[] } } }
+    profilePackage.dsh = { profile: { bundles: [PACKAGE_NAME] } }
+    writeFileSync(profilePackagePath, JSON.stringify(profilePackage, null, 2) + '\n')
+    const installedPath = join(fixture.profileDir, 'node_modules', PACKAGE_NAME)
+    mkdirSync(installedPath, { recursive: true })
+    writeFileSync(join(installedPath, 'package.json'), JSON.stringify({ name: PACKAGE_NAME, version: SOURCE_VERSION }, null, 2) + '\n')
+    installOneShotDsh(fixture)
+
+    const result = runSource(fixture)
+
+    expect(result.status).not.toBe(0)
+    expect(result.stdout + result.stderr).not.toContain('one-shot dsh cannot launch plugin add')
+    expect(readSourceCalls(fixture.callsFile).filter(call => call.tool === 'dsh').map(call => call.argv)).toEqual([
+      ['--version'],
+    ])
   })
 
   it('keeps four build approvals idempotent across repeated installs', () => {
@@ -190,5 +339,27 @@ describe.skipIf(!POWERSHELL)('PowerShell source installer', () => {
       const result = runSource(fixture)
       expect(result.status).not.toBe(0)
     }
+  })
+
+  it.each([
+    ['missing both source versions', (pkg: Record<string, unknown>, manifest: Record<string, unknown>) => {
+      delete pkg.version
+      delete manifest.version
+    }],
+    ['non-string package version', (pkg: Record<string, unknown>) => { pkg.version = 150001 }],
+    ['non-string manifest version', (_pkg: Record<string, unknown>, manifest: Record<string, unknown>) => { manifest.version = 150001 }],
+    ['case-sensitive package identity', (pkg: Record<string, unknown>) => { pkg.name = 'DSH-better-sidebar' }],
+    ['case-sensitive version identity', (pkg: Record<string, unknown>) => { pkg.version = '0.15.0-XLH.1' }],
+    ['inexact package identity', (pkg: Record<string, unknown>) => { pkg.name = 'dsh-better-sidebar-extra' }],
+  ] as const)('rejects %s before any source tool call', (_name, mutate) => {
+    const fixture = createSourceInstallFixture()
+    fixtures.push(fixture)
+    writeSourceManifests(fixture, mutate)
+
+    const result = runSource(fixture)
+
+    expect(result.status).not.toBe(0)
+    expect(readSourceCalls(fixture.callsFile)).toEqual([])
+    expect(existsSync(join(fixture.repo, '.artifacts'))).toBe(false)
   })
 })
