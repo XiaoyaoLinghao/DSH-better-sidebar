@@ -175,3 +175,29 @@ quarantine at:
 `C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-c56ac6f87570eae6-bdd97e8c43ef2856`
 
 No production or test threshold changes were made for this run.
+
+## Credential-isolation follow-up
+
+The mount runner now creates an owned keyless `$DSH_HOME/.credentials.yaml`
+containing `{}` immediately after the scratch directories are created and
+before profile installation or web launch. This prevents rc.8 credential
+migration from copying a configured key from the user's real DSH home into the
+scratch profile. The file is created under `umask 077` and receives a portable
+`chmod 600` best effort; the runner never reads, copies, or removes the real
+home credential file.
+
+TDD evidence for the regression is behavioral: the test-only positional probe
+invokes both the pinned default runner and an explicit `DSH_CMD` fake runner.
+Each fake runner verifies the scratch document is exactly `{}` plus one LF,
+the hostile real-home document remains unchanged, and the two paths are
+distinct before the probe exits without profile installation or web/network
+activity. The pre-fix probe failed with `ENOENT` for the scratch credential
+file; after the runner change it passed for both lanes.
+
+Follow-up verification:
+
+- `pnpm exec vitest run tests/script-safety.spec.ts -t "empty scratch credential"`: **1 passed**.
+- `bash -n scripts/e2e-mount.sh`: **passed**.
+- A fresh real pinned rc.8 mount lane remains **7/7**; its non-destructive
+  quarantine is preserved at
+  `C:\Users\ZhangYang\AppData\Local\Temp\.dsh-e2e-mount.quarantine-4dfe08c761753d89-fa27f31648049302`.

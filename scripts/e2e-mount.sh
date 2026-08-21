@@ -151,7 +151,22 @@ LOG_DIR="$SCRATCH"
 WEB_LOG="$LOG_DIR/web.log"
 PID_FILE="$LOG_DIR/web.pid"
 mkdir -p "$DSH_HOME/profiles/web" "$WORKSPACE_DIR"
+# rc.8 may migrate a user's credentials into a newly-created DSH home before
+# onboarding renders. Seed an owned, keyless document first so that migration
+# has no opportunity to copy credentials from the real home. The scratch path
+# is created by safe-temp and is the only path touched here.
+umask 077
+printf '{}\n' > "$DSH_HOME/.credentials.yaml"
+chmod 600 "$DSH_HOME/.credentials.yaml" 2>/dev/null || true
 say "scratch home: ${DSH_HOME}（DSH_HOME=${DSH_HOME}）"
+
+if [ "${1:-}" = "--probe-scratch-credentials" ]; then
+  [ -n "${DSH_PROBE_CAPTURE:-}" ] || die "DSH_PROBE_CAPTURE 未设置"
+  # Test-only boundary: the fake runner verifies the owned scratch document
+  # before any profile install, web launch, or network access can occur.
+  run_dsh --probe-scratch-credentials
+  exit $?
+fi
 
 # tarball 解析；未显式提供时始终自行 build + pack 到受保护的 scratch，
 # 避免误用仓库里残留的旧产物。

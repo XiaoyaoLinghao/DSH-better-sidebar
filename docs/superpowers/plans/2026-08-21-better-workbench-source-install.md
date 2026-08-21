@@ -662,6 +662,12 @@ including plugin discovery, persisted settings, Sidechain commands/view, and
 layout ownership. Preserve the runner's quarantine output for manual/OS
 reclamation; do not delete it recursively.
 
+Credential-isolation follow-up: the runner must seed an owned empty
+`$DSH_HOME/.credentials.yaml` before profile installation or web launch so rc.8
+cannot migrate credentials from the real DSH home. A behavioral fake-runner
+probe covers both default and explicit lanes and proves the hostile real-home
+credential remains unchanged; it exits before network/web work.
+
 - [x] **Step 6: Commit Task 5 acceptance guards**
 
 ```bash

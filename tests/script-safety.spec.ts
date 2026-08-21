@@ -292,6 +292,68 @@ describe('verification script scratch safety', () => {
     }
   })
 
+  it('proves both runner lanes see an empty scratch credential file before any mount command', () => {
+    const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-credentials-probe.'))
+    const fakeBin = join(sandbox, 'bin')
+    const capture = join(sandbox, 'credentials.json')
+    const realHome = join(sandbox, 'real-home')
+    const realCredentials = join(realHome, '.dsh', '.credentials.yaml')
+    const emptyCredentials = '{}'.concat(String.fromCharCode(10))
+    mkdirSync(fakeBin)
+    mkdirSync(join(realHome, '.dsh'), { recursive: true })
+    writeFileSync(realCredentials, 'apiKey: hostile-real-secret\n')
+    const runner = `#!/usr/bin/env node
+const fs = require('node:fs')
+const path = require('node:path')
+const dshHome = process.env.DSH_HOME
+const realCredentials = process.env.DSH_REAL_CREDENTIALS
+if (!dshHome || !realCredentials) process.exit(10)
+const scratchCredentials = path.join(dshHome, '.credentials.yaml')
+const scratch = fs.readFileSync(scratchCredentials, 'utf8')
+const real = fs.readFileSync(realCredentials, 'utf8')
+if (scratch !== '{}\\n' || real !== 'apiKey: hostile-real-secret\\n' || scratchCredentials === realCredentials) process.exit(11)
+fs.writeFileSync(process.env.DSH_PROBE_CAPTURE, JSON.stringify({ argv: process.argv.slice(2), scratch }))
+`
+    const fakePnpm = join(fakeBin, 'pnpm')
+    const fakeDsh = join(fakeBin, 'fake-dsh')
+    writeFileSync(fakePnpm, runner)
+    writeFileSync(fakeDsh, runner)
+    chmodSync(fakePnpm, 0o755)
+    chmodSync(fakeDsh, 0o755)
+    try {
+      const pathKey = process.platform === 'win32' ? ';' : ':'
+      const script = resolve(process.cwd(), 'scripts/e2e-mount.sh')
+      const invokeProbe = (dshCmd: string) => spawnSync('bash', [script, '--probe-scratch-credentials'], {
+        env: {
+          ...process.env,
+          DSH_CMD: dshCmd,
+          DSH_HOME_BASE: join(sandbox, dshCmd ? 'explicit-base' : 'default-base'),
+          DSH_PROBE_CAPTURE: capture,
+          DSH_REAL_CREDENTIALS: realCredentials,
+          HOME: realHome,
+          PATH: `${fakeBin}${pathKey}${process.env.PATH ?? ''}`,
+        },
+        encoding: 'utf8',
+      })
+      const defaultProbe = invokeProbe('')
+      if ((defaultProbe.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return
+      expect(defaultProbe.status, defaultProbe.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toMatchObject({
+        argv: ['dlx', '--allow-build=node-pty', '--allow-build=protobufjs', '--allow-build=@deepseek-ai/dsh-subprocess-local', '--allow-build=koffi', '@deepseek-ai/dsh@0.1.0-rc.8', '--probe-scratch-credentials'],
+        scratch: emptyCredentials,
+      })
+
+      const explicitProbe = invokeProbe('fake-dsh')
+      expect(explicitProbe.status, explicitProbe.stderr).toBe(0)
+      expect(JSON.parse(readFileSync(capture, 'utf8'))).toMatchObject({
+        argv: ['--probe-scratch-credentials'],
+        scratch: emptyCredentials,
+      })
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true })
+    }
+  })
+
   it('executes the pinned rc.8 bin directly and passes scoped build approvals', () => {
     const sandbox = mkdtempSync(join(tmpdir(), 'dsh-mount-probe.'))
     const fakeBin = join(sandbox, 'bin')
