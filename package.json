@@ -5,7 +5,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/XiaoyaoLinghao/DSH-better-sidebar"
+    "url": "https://github.com/XiaoyaoLinghao/DSH-better-workbench"
   },
   "publishConfig": {
     "access": "public"

@@ -15,7 +15,7 @@
 - Keep npm/package name exactly `dsh-better-sidebar`.
 - Keep DSH plugin id exactly `dsh-external/dsh-better-sidebar`.
 - Do not rename `ctx.betterSidebar`, routes, bundle ids, config keys, preferences, or persisted metadata.
-- Repository/current-maintainer URL is `https://github.com/XiaoyaoLinghao/DSH-better-sidebar`; historical upstream PR/release links remain attributed to `omdsh-dev`.
+- Repository/current-maintainer URL is `https://github.com/XiaoyaoLinghao/DSH-better-workbench`; historical upstream PR/release links remain attributed to `omdsh-dev`.
 - Source install requires DSH `0.1.0-rc.8` and installs through `dsh plugin --profile <profile> add file:<absolute-tarball>`.
 - Allow exactly the required build-script packages in the source workspace/profile: `node-pty`, `protobufjs`, `@deepseek-ai/dsh-subprocess-local`, and `koffi`.
 - `.artifacts/` is retained and gitignored; installers must not recursively delete it or user data.
@@ -78,7 +78,10 @@ it('identifies the compatible DSH Better Workbench fork', () => {
   expect(manifest.version).toBe('0.15.0-xlh.1')
   expect(pkg.description).toContain('DSH Better Workbench')
   expect(manifest.description).toContain('DSH Better Workbench')
-  expect(pkg.repository?.url).toBe('https://github.com/XiaoyaoLinghao/DSH-better-sidebar')
+  expect(pkg.repository).toEqual({
+    type: 'git',
+    url: 'https://github.com/XiaoyaoLinghao/DSH-better-workbench',
+  })
 })
 ```
 
@@ -124,7 +127,7 @@ Set:
 "description": "DSH Better Workbench: a session-isolated web workbench with sidebar, editor, terminal, Git, browser, extensible tabs/viewers, and native Sidechain.",
 "repository": {
   "type": "git",
-  "url": "https://github.com/XiaoyaoLinghao/DSH-better-sidebar"
+  "url": "https://github.com/XiaoyaoLinghao/DSH-better-workbench"
 }
 ```
 
@@ -688,7 +691,7 @@ with one fresh Luna worker, then obtain one scoped Sol re-review before push.
 After final approval and fresh verification:
 
 1. Push `feat/better-workbench-source-install` to
-   `https://github.com/XiaoyaoLinghao/DSH-better-sidebar`.
+   `https://github.com/XiaoyaoLinghao/DSH-better-workbench`.
 2. Fast-forward fork `main` only if it is still an ancestor and the user has
    authorized merging; never force-push.
 3. Preserve the feature worktree when remote review/follow-up may continue.

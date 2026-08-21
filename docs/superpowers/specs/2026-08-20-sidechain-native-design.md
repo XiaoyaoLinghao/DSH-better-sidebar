@@ -4,7 +4,7 @@
 
 **Status:** Approved direction; pending written-spec review
 
-**Target repository:** `XiaoyaoLinghao/DSH-better-sidebar`
+**Target repository:** `XiaoyaoLinghao/DSH-better-workbench`
 
 **Compatibility baseline:** DeepSeek Harness `0.1.0-rc.8` only
 
@@ -262,7 +262,7 @@ Keyless CI cannot reliably create a real model-backed child. Command-to-reveal b
 
 ## Release and repository workflow
 
-Development occurs on `feat/sidechain-native` in the local clone. The local `fork` remote points to `XiaoyaoLinghao/DSH-better-sidebar`; `origin` remains the upstream repository.
+Development occurs on `feat/sidechain-native` in the local clone. The local `fork` remote points to `XiaoyaoLinghao/DSH-better-workbench`; `origin` remains the upstream repository.
 
 Implementation changes are committed to the feature branch, reviewed task by task, and pushed to the fork only after:
 

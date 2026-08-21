@@ -92,7 +92,10 @@ describe('registry manifest consistency (dsh.plugin.json)', () => {
     expect(manifest.version).toBe('0.15.0-xlh.1')
     expect(pkg.description).toContain('DSH Better Workbench')
     expect(manifest.description).toContain('DSH Better Workbench')
-    expect(pkg.repository?.url).toBe('https://github.com/XiaoyaoLinghao/DSH-better-sidebar')
+    expect(pkg.repository).toEqual({
+      type: 'git',
+      url: 'https://github.com/XiaoyaoLinghao/DSH-better-workbench',
+    })
   })
 
   it('requires the rc.8 DSH engine and ships third-party notices', () => {

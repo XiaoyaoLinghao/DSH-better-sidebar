@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Target DeepSeek Harness `0.1.0-rc.8` only; do not preserve rc.5, rc.6, or rc.7 compatibility.
-- Work only in `XiaoyaoLinghao/DSH-better-sidebar`; do not modify any DSH source checkout or the sibling reference repository.
+- Work only in `XiaoyaoLinghao/DSH-better-workbench`; do not modify any DSH source checkout or the sibling reference repository.
 - Deliver one plugin/package and one client bundle identity; do not add a Git submodule, Git runtime dependency, or second Cordis plugin row.
 - Sidechain is a built-in descriptor with `id: 'sidechain'`, `order: 35`, `single: true`, and preference `autoOpenSidechain: true` by default.
 - Keep the existing Subagent Tab's whole-tree/navigation/jobs behavior unchanged.

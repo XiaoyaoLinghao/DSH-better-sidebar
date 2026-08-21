@@ -10,14 +10,13 @@
 # 独立包被 profile 引用。
 #
 # 用法（源码优先）：
-#   git clone https://github.com/XiaoyaoLinghao/DSH-better-sidebar.git
-#   cd DSH-better-sidebar
-#   # 从源码构建并安装到 profile
-#   powershell -ExecutionPolicy Bypass -File install.ps1 -Source -Profile web
+#   git clone https://github.com/XiaoyaoLinghao/DSH-better-workbench.git
+#   cd DSH-better-workbench
+#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web
 #   # 仅预览源码安装步骤
-#   powershell -ExecutionPolicy Bypass -File install.ps1 -Source -Profile web -DryRun
+#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Source -Profile web -DryRun
 #   # 修复 node-pty 依赖（终端提示「node-pty 加载失败」时用，见 issue #140）
-#   powershell -ExecutionPolicy Bypass -File install.ps1 -Repair
+#   powershell -ExecutionPolicy Bypass -File scripts/install.ps1 -Repair
 #
 # 参数：
 #   -Version    npm 版本号/范围，缺省 latest（自动解析为最新）。

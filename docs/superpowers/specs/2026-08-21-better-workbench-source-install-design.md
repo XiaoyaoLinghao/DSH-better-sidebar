@@ -2,7 +2,7 @@
 
 ## Context
 
-The fork at `XiaoyaoLinghao/DSH-better-sidebar` now combines the original
+The fork at `XiaoyaoLinghao/DSH-better-workbench` now combines the original
 service-oriented sidebar workbench with native Sidechain support. The existing
 public name, `DSH-better-sidebar`, understates that scope, while changing the
 package name, plugin id, service name, or persisted keys would break existing
@@ -57,7 +57,7 @@ remaining visibly distinct. Later source releases increment the `xlh` suffix;
 a future stable release requires a separate decision.
 
 `package.json.repository.url` and current fork-maintainer links point to
-`https://github.com/XiaoyaoLinghao/DSH-better-sidebar`. Historical changelog
+`https://github.com/XiaoyaoLinghao/DSH-better-workbench`. Historical changelog
 links keep their original upstream URLs and attribution.
 
 ## Source-install interface
