@@ -103,22 +103,36 @@ warn() { printf '\033[33m[warn]\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[31m[error]\033[0m %s\n' "$*" >&2; exit 1; }
 
 # 步骤 1（安装与修复共用）：预写 workspace 设置（幂等），保证 pnpm 不拦截
-# node-pty/protobufjs 构建脚本、放行本插件新版本
+# node-pty/protobufjs/@deepseek-ai/dsh-subprocess-local/koffi 构建脚本、放行本插件新版本
 ensure_workspace_settings() {
   WS_RESULT="$(node -e '
 const fs = require("fs");
 const p = process.argv[1];
 let t = fs.readFileSync(p, "utf8");
 const before = t;
-// allowBuilds：把 node-pty/protobufjs 归位为 true
-t = t.replace(/^(\s*)(node-pty|protobufjs):.*$/gm, "$1$2: true");
+// allowBuilds：四个 native 构建依赖均显式放行
+const allowBuildEntries = ["node-pty", "protobufjs", "@deepseek-ai/dsh-subprocess-local", "koffi"];
+const quote = String.fromCharCode(39);
+const yamlKey = (name) => name.startsWith("@") ? quote + name + quote : name;
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const keyPattern = (name) => {
+  const escaped = escapeRegex(name);
+  return new RegExp("^([ \\t]*)(?:" + escaped + "|" + quote + escaped + quote + "|\\\"" + escaped + "\\\"):\\s*.*$", "m");
+};
 if (!/^\s*allowBuilds:\s*$/m.test(t)) {
-  t += "\nallowBuilds:\n  node-pty: true\n  protobufjs: true\n";
+  t += "\nallowBuilds:\n" + allowBuildEntries.map((name) => "  " + yamlKey(name) + ": true").join("\n") + "\n";
 } else {
-  for (const k of ["node-pty", "protobufjs"]) {
-    if (!new RegExp("^\\s*" + k + ":\\s*true\\s*$", "m").test(t)) {
-      t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n  " + k + ": true");
+  const missing = [];
+  for (const name of allowBuildEntries) {
+    const pattern = keyPattern(name);
+    if (pattern.test(t)) {
+      t = t.replace(pattern, "$1" + yamlKey(name) + ": true");
+    } else {
+      missing.push("  " + yamlKey(name) + ": true");
     }
+  }
+  if (missing.length) {
+    t = t.replace(/^(\s*allowBuilds:\s*)$/m, "$1\n" + missing.join("\n"));
   }
 }
 // minimumReleaseAgeExclude：放行 DSH 依赖与本插件，避免 <24h 新版本被拒
@@ -154,7 +168,7 @@ if (t !== before) fs.writeFileSync(p, t);
 console.log(t === before ? "unchanged" : "updated");
 ' "$WS_YML")"
   [ "$WS_RESULT" = "updated" ] \
-    && say "已确保 ${WS_YML}：allowBuilds（node-pty/protobufjs: true）+ minimumReleaseAgeExclude（${PKG}）" \
+    && say "已确保 ${WS_YML}：allowBuilds（四个 native 依赖: true）+ minimumReleaseAgeExclude（${PKG}）" \
     || say "workspace 设置已就绪，跳过"
 }
 

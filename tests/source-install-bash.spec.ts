@@ -87,9 +87,15 @@ describe('Bash source installer', () => {
     expect(runSource(fixture).status).toBe(0)
 
     const text = workspaceText(fixture)
-    for (const key of ['allowBuilds:', 'node-pty: true', 'protobufjs: true', 'minimumReleaseAgeExclude:']) {
-      expect(text.match(new RegExp(`^\\s*${key.replace(':', '\\:')}`, 'gm')) ?? []).toHaveLength(1)
+    for (const packageName of ['node-pty', 'protobufjs', '@deepseek-ai/dsh-subprocess-local', 'koffi']) {
+      const entries = text.split(/\r?\n/).filter(line => {
+        const match = /^\s*(.+?):\s*true\s*$/.exec(line)
+        return match?.[1]?.replace(/^['"]|['"]$/g, '') === packageName
+      })
+      expect(entries).toHaveLength(1)
     }
+    expect(text.match(/^\s*allowBuilds:\s*$/gm) ?? []).toHaveLength(1)
+    expect(text.match(/^\s*minimumReleaseAgeExclude:\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+['"]?@deepseek-ai\/\*['"]?\s*$/gm) ?? []).toHaveLength(1)
     expect(text.match(/^\s*-\s+dsh-better-sidebar\s*$/gm) ?? []).toHaveLength(1)
   }, 15_000)
